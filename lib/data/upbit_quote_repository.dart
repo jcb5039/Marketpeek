@@ -1,4 +1,4 @@
-// 코인 시세를 업비트 공개 API(키 없음)에서 받아온다. 미국주식·환율·AI 이슈는 fallback에 맡긴다.
+// 코인 시세와 원화 마켓 코인 목록을 업비트 공개 API(키 없음)에서 받아온다. 미국주식·환율·AI 이슈는 fallback에 맡긴다.
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -18,6 +18,29 @@ class UpbitQuoteRepository implements QuoteRepository {
   final http.Client _client;
 
   static const _timeout = Duration(seconds: 10);
+
+  /// [fetchCoinList]로 받은 원화 마켓 심볼. 받기 전이면 null.
+  Set<String>? _krwSymbols;
+
+  /// 업비트 원화(KRW) 마켓의 전체 코인 목록. 이름은 한글 이름.
+  Future<List<Coin>> fetchCoinList() async {
+    final uri = Uri.https('api.upbit.com', '/v1/market/all', {'isDetails': 'false'});
+    final res = await _client.get(uri).timeout(_timeout);
+    if (res.statusCode != 200) {
+      throw http.ClientException('Upbit ${res.statusCode}: ${res.body}', uri);
+    }
+    final list = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
+    final coins = [
+      for (final item in list.cast<Map<String, dynamic>>())
+        if ((item['market'] as String).startsWith('KRW-'))
+          Coin(
+            symbol: (item['market'] as String).substring(4),
+            name: item['korean_name'] as String,
+          ),
+    ];
+    _krwSymbols = {for (final c in coins) c.symbol};
+    return coins;
+  }
 
   @override
   Future<QuoteBundle> fetch({
@@ -44,7 +67,11 @@ class UpbitQuoteRepository implements QuoteRepository {
     );
   }
 
-  Future<Map<String, CoinQuote>> _fetchCoins(List<String> symbols) async {
+  Future<Map<String, CoinQuote>> _fetchCoins(List<String> requested) async {
+    // 업비트 ticker는 없는 마켓이 하나라도 섞이면 요청 전체가 404가 된다.
+    // 상장폐지된 코인이 관심목록에 남아 있어도 나머지 시세는 받도록 미리 뺀다.
+    final known = _krwSymbols;
+    final symbols = known == null ? requested : requested.where(known.contains).toList();
     if (symbols.isEmpty) return const {};
     final uri = Uri.https('api.upbit.com', '/v1/ticker', {
       'markets': symbols.map((s) => 'KRW-$s').join(','),

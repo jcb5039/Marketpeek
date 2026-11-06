@@ -18,6 +18,17 @@ class CurrencyScreen extends StatelessWidget {
       appBar: AppBar(
         titleSpacing: 0,
         title: const Text('환율 통화 선택', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.accent,
+              textStyle: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            child: const Text('완료'),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -42,6 +53,8 @@ class CurrencyScreen extends StatelessWidget {
                     if (i > 0) const Divider(height: 1, indent: 16, endIndent: 16),
                     RadioListTile<String>(
                       value: c.code,
+                      // 이미 고른 통화를 다시 누르면 선택이 풀린다(onChanged(null)).
+                      toggleable: true,
                       controlAffinity: ListTileControlAffinity.trailing,
                       title: Text('${c.name} ${c.code}',
                           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),

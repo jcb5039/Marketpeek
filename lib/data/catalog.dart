@@ -1,9 +1,10 @@
 import '../models/models.dart';
 
 /// 검색·선택 가능한 종목/통화 목록.
-/// 실제 서비스에서는 서버(업비트 마켓 목록, Finnhub 심볼 검색)로 대체한다.
+/// 코인은 앱 시작 시 업비트 원화 마켓 목록으로 바뀐다([setCoins]). 미국주식은 아직 고정 목록.
 class Catalog {
-  static const coins = <Coin>[
+  /// 업비트 목록을 받기 전(첫 실행 + 오프라인)에 쓰는 기본 코인.
+  static const _defaultCoins = <Coin>[
     Coin(symbol: 'BTC', name: '비트코인'),
     Coin(symbol: 'ETH', name: '이더리움'),
     Coin(symbol: 'XRP', name: '리플'),
@@ -13,6 +14,15 @@ class Catalog {
     Coin(symbol: 'USDT', name: '테더'),
     Coin(symbol: 'AVAX', name: '아발란체'),
   ];
+
+  static List<Coin> coins = _defaultCoins;
+
+  static void setCoins(List<Coin> list) {
+    if (list.isNotEmpty) coins = List.unmodifiable(list);
+  }
+
+  /// 테스트용: 기본 목록으로 되돌린다.
+  static void resetCoins() => coins = _defaultCoins;
 
   /// 검색어 없을 때 보여줄 인기 코인.
   static const popularCoinSymbols = ['BTC', 'ETH', 'XRP', 'SOL'];
@@ -41,8 +51,9 @@ class Catalog {
     Currency(code: 'CNY', name: '중국 위안'),
   ];
 
-  static Coin coin(String symbol) =>
-      coins.firstWhere((c) => c.symbol == symbol);
+  /// 목록에 없는 심볼(상장폐지 등)이면 심볼을 이름으로 쓴다.
+  static Coin coin(String symbol) => coins.firstWhere((c) => c.symbol == symbol,
+      orElse: () => Coin(symbol: symbol, name: symbol));
   static UsStock stock(String ticker) =>
       stocks.firstWhere((s) => s.ticker == ticker);
   static Currency currency(String code) =>
@@ -53,10 +64,24 @@ class Catalog {
     if (query.isEmpty) {
       return popularCoinSymbols.map(coin).toList();
     }
-    return coins
+    // 심볼 완전 일치 → 심볼·이름 앞부분 일치 → 그 외 포함 순.
+    int rank(Coin c) {
+      final sym = c.symbol.toLowerCase();
+      if (sym == query || c.name == query) return 0;
+      if (sym.startsWith(query) || c.name.startsWith(query)) return 1;
+      return 2;
+    }
+
+    final hits = coins
         .where((c) =>
             c.symbol.toLowerCase().contains(query) || c.name.contains(query))
         .toList();
+    final ranks = {for (final c in hits) c.symbol: rank(c)};
+    hits.sort((a, b) {
+      final r = ranks[a.symbol]!.compareTo(ranks[b.symbol]!);
+      return r != 0 ? r : a.symbol.compareTo(b.symbol);
+    });
+    return hits;
   }
 
   static List<UsStock> searchStocks(String q) {

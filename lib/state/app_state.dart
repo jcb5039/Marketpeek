@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,10 +16,14 @@ class AppState extends ChangeNotifier {
   AppState({
     required QuoteRepository repository,
     WidgetSync? widgetSync,
+    this.coinListLoader,
   })  : _repo = repository,
         _widgetSync = widgetSync ?? WidgetSync();
 
   final QuoteRepository _repo;
+
+  /// 검색용 전체 코인 목록을 받아오는 함수 (업비트 원화 마켓). 없으면 기본 목록만 쓴다.
+  final Future<List<Coin>> Function()? coinListLoader;
   final WidgetSync _widgetSync;
   SharedPreferences? _prefs;
 
@@ -43,6 +49,10 @@ class AppState extends ChangeNotifier {
   /// 3개면 위젯이 공간에 따라 제목·갱신 시각 줄을 생략할 수 있다.
   static const maxWidgetRows = 3;
 
+  /// 위젯 스냅샷에 담는 코인·미국주식 최대 개수(홈 목록 앞에서부터).
+  /// 위젯마다 "위젯 편집"에서 몇 번째부터 보일지 고른다 — 사각형 2개면 1~3, 4~6번째.
+  static const maxWidgetItems = 6;
+
   bool get isEmpty =>
       coinSymbols.isEmpty && stockTickers.isEmpty && fxCode == null;
 
@@ -60,8 +70,40 @@ class AppState extends ChangeNotifier {
     showUpdatedAt = p.getBool('showUpdatedAt') ?? true;
     colorScheme = ChangeColorScheme.values.byName(
         p.getString('colorScheme') ?? ChangeColorScheme.korean.name);
+    _loadCachedCoinList(p);
     notifyListeners();
+    // 목록을 먼저 받아야 업비트 시세 요청에서 상장폐지 코인을 걸러낼 수 있다.
+    await _refreshCoinList(p);
     await refresh();
+  }
+
+  void _loadCachedCoinList(SharedPreferences p) {
+    final raw = p.getString('coinCatalog');
+    if (raw == null) return;
+    try {
+      final list = (jsonDecode(raw) as List<dynamic>).cast<Map<String, dynamic>>();
+      Catalog.setCoins([
+        for (final m in list) Coin(symbol: m['s'] as String, name: m['n'] as String),
+      ]);
+    } catch (e) {
+      debugPrint('Cached coin list broken: $e');
+    }
+  }
+
+  Future<void> _refreshCoinList(SharedPreferences p) async {
+    final loader = coinListLoader;
+    if (loader == null) return;
+    try {
+      final coins = await loader();
+      if (coins.isEmpty) return;
+      Catalog.setCoins(coins);
+      await p.setString('coinCatalog',
+          jsonEncode([for (final c in coins) {'s': c.symbol, 'n': c.name}]));
+      notifyListeners();
+    } catch (e) {
+      // 목록을 못 받아도 캐시나 기본 목록으로 계속 쓴다.
+      debugPrint('Coin list fetch failed: $e');
+    }
   }
 
   Future<void> refresh() async {

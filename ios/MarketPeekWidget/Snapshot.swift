@@ -11,6 +11,11 @@ struct Snapshot: Codable {
         var showStockKrw: Bool
         var showMarketStatus: Bool
         var showUpdatedAt: Bool
+        var coinRows: Int?   // v4: 사각형 한 칸에 보일 코인 수
+        var stockRows: Int?  // v4
+
+        var coinRowCount: Int { min(max(coinRows ?? 2, 1), 3) }
+        var stockRowCount: Int { min(max(stockRows ?? 1, 1), 3) }
     }
 
     struct Coin: Codable, Hashable {
@@ -78,12 +83,17 @@ struct Snapshot: Codable {
 
     /// 위젯 갤러리 미리보기용 예시 (기획서 6장 예시 값, 실제 시세 아님).
     static let placeholder = Snapshot(
-        schemaVersion: 3,
+        schemaVersion: 4,
         updatedAt: Date(),
-        settings: .init(colorScheme: "korean", showStockKrw: true, showMarketStatus: true, showUpdatedAt: true),
+        settings: .init(colorScheme: "korean", showStockKrw: true, showMarketStatus: true, showUpdatedAt: true,
+                        coinRows: 3, stockRows: 1),
         coins: [
             .init(symbol: "BTC", name: "비트코인", price: "100,000,000원", priceShort: "1억", change: 2.5),
             .init(symbol: "XRP", name: "리플", price: "3,500원", priceShort: "3,500", change: -1.2),
+            .init(symbol: "ETH", name: "이더리움", price: "5,200,000원", priceShort: "520만", change: 0.8),
+            .init(symbol: "SOL", name: "솔라나", price: "250,000원", priceShort: "25만", change: -3.4),
+            .init(symbol: "DOGE", name: "도지코인", price: "250원", priceShort: "250", change: 5.1),
+            .init(symbol: "PEPE", name: "페페", price: "0.00694원", priceShort: "0.00694", change: 6.9),
         ],
         stocks: [.init(ticker: "TSLA", name: "테슬라", priceUsd: "$450.00", priceKrw: "643,500원", priceKrwShort: "64.4만", change: 3.1)],
         fx: .init(code: "USD", name: "미국 달러", unit: 1, rate: "1,430.50원", change: 0.4),

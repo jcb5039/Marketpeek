@@ -20,8 +20,10 @@ Future<void> main() async {
   final QuoteRepository others = apiBaseUrl.isEmpty
       ? MockQuoteRepository()
       : ServerQuoteRepository(baseUrl: apiBaseUrl);
+  final upbit = UpbitQuoteRepository(fallback: others);
   final state = AppState(
-    repository: UpbitQuoteRepository(fallback: others),
+    repository: upbit,
+    coinListLoader: upbit.fetchCoinList,
   );
   runApp(MarketPeekApp(state: state));
   await state.load();

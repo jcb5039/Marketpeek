@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:marketpeek/app/app_scope.dart';
 import 'package:marketpeek/data/catalog.dart';
 import 'package:marketpeek/data/quote_repository.dart';
 import 'package:marketpeek/main.dart';
 import 'package:marketpeek/state/app_state.dart';
+import 'package:marketpeek/ui/currency/currency_screen.dart';
 import 'package:marketpeek/util/format.dart';
 import 'package:marketpeek/util/market_hours.dart';
 import 'package:marketpeek/widget_bridge/widget_sync.dart';
@@ -29,6 +31,9 @@ void main() {
     test('코인 원화가', () {
       expect(formatKrw(100000000), '100,000,000원');
       expect(formatKrw(3500), '3,500원');
+      expect(formatKrw(0.00694), '0.00694원');
+      expect(formatKrw(0.5), '0.5원');
+      expect(formatKrw(12.3), '12.30원');
       expect(formatPct(2.5), '+2.50%');
       expect(formatPct(-1.2), '-1.20%');
     });
@@ -50,6 +55,7 @@ void main() {
     expect(formatKrwShort(5200000), '520만');
     expect(formatKrwShort(643725), '64.4만');
     expect(formatKrwShort(3500), '3,500');
+    expect(formatKrwShort(0.00694), '0.00694');
   });
 
   group('미국장 상태', () {
@@ -68,17 +74,20 @@ void main() {
   });
 
   group('위젯 스냅샷', () {
-    test('위젯 종목 수만큼만, 목록 순서대로 담긴다', () async {
+    test('6개까지, 목록 순서대로 담고 한 칸 개수는 설정으로 보낸다', () async {
       final s = await _state();
-      await s.addCoin('BTC');
-      await s.addCoin('XRP');
-      await s.addCoin('ETH');
-      await s.updateSettings(coinWidgetCount: 2);
-      await s.reorderCoins(2, 0); // ETH를 맨 앞으로
+      for (final c in Catalog.coins.take(7)) {
+        await s.addCoin(c.symbol);
+      }
+      await s.updateSettings(coinWidgetCount: 3);
+      await s.reorderCoins(2, 0); // 3번째를 맨 앞으로
 
       final snap = WidgetSync.buildSnapshot(s);
-      final coins = snap['coins'] as List;
-      expect(coins.map((c) => c['symbol']), ['ETH', 'BTC']);
+      final coins = (snap['coins'] as List).map((c) => c['symbol']).toList();
+      expect(coins, s.coinSymbols.take(AppState.maxWidgetItems).toList());
+      expect(coins.length, 6);
+      expect(coins.first, Catalog.coins[2].symbol);
+      expect((snap['settings'] as Map)['coinRows'], 3);
     });
 
     test('미국주식 원화는 선택 통화와 무관하게 USD/KRW', () async {
@@ -115,5 +124,39 @@ void main() {
     expect(find.text('BTC'), findsOneWidget);
     expect(find.text('100,000,000원'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
+  });
+
+  testWidgets('환율: 고른 통화를 다시 누르면 선택이 풀리고, 완료로 닫힌다', (tester) async {
+    final s = AppState(repository: MockQuoteRepository(), widgetSync: _NoopSync());
+    await tester.runAsync(s.load);
+    await tester.pumpWidget(AppScope(
+      state: s,
+      child: MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute<void>(builder: (_) => const CurrencyScreen())),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    Future<void> tapUsd() async {
+      await tester.tap(find.text('미국 달러 USD'));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pumpAndSettle();
+    }
+
+    await tapUsd();
+    expect(s.fxCode, 'USD');
+    await tapUsd();
+    expect(s.fxCode, isNull);
+
+    await tester.tap(find.text('완료'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CurrencyScreen), findsNothing);
   });
 }

@@ -84,7 +84,7 @@ class _ListBody extends StatelessWidget {
             editing: editing,
             onReorder: s.reorderCoins,
             onRemove: s.removeCoin,
-            itemBuilder: (id, i) => _CoinRow(symbol: id, inWidget: i < s.coinWidgetCount),
+            itemBuilder: (id, i) => _CoinRow(symbol: id, inWidget: i < AppState.maxWidgetItems),
           ),
         ],
         if (showStocks) ...[
@@ -100,7 +100,7 @@ class _ListBody extends StatelessWidget {
             editing: editing,
             onReorder: s.reorderStocks,
             onRemove: s.removeStock,
-            itemBuilder: (id, i) => _StockRow(ticker: id, inWidget: i < s.stockWidgetCount),
+            itemBuilder: (id, i) => _StockRow(ticker: id, inWidget: i < AppState.maxWidgetItems),
           ),
         ],
         if (showFx) ...[

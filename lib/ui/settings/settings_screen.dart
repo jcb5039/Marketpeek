@@ -22,12 +22,12 @@ class SettingsScreen extends StatelessWidget {
           const _Header('위젯별 표시 항목'),
           _Group(children: [
             _CountTile(
-              title: '코인 위젯 종목 수',
+              title: '코인 위젯 한 칸에 보일 개수',
               value: s.coinWidgetCount,
               onChanged: (v) => s.updateSettings(coinWidgetCount: v),
             ),
             _CountTile(
-              title: '미국주식 위젯 종목 수',
+              title: '미국주식 위젯 한 칸에 보일 개수',
               value: s.stockWidgetCount,
               onChanged: (v) => s.updateSettings(stockWidgetCount: v),
             ),
@@ -146,7 +146,9 @@ class _CountTile extends StatelessWidget {
       dense: true,
       title: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
       subtitle: Text(
-        value == AppState.maxWidgetRows ? '3개면 제목·갱신 시각 줄이 빠질 수 있어요' : '위젯 표시는 홈 목록 순서대로',
+        value == AppState.maxWidgetRows
+            ? '3개면 제목·갱신 시각 줄이 빠질 수 있어요'
+            : '홈 목록 ${AppState.maxWidgetItems}번째까지 위젯에 넣을 수 있어요. 위젯 편집에서 몇 번째부터 보일지 골라요',
         style: TextStyles.caption,
       ),
       trailing: SegmentedButton<int>(

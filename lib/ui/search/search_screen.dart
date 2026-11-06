@@ -42,12 +42,15 @@ class _SearchScreenState extends State<SearchScreen> {
         automaticallyImplyLeading: false,
         title: Text(_isCoin ? '코인 추가' : '미국주식 추가'),
         actions: [
-          IconButton(
-            tooltip: '닫기',
-            icon: const Icon(Icons.close),
+          TextButton(
             onPressed: () => Navigator.of(context).pop(),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.accent,
+              textStyle: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            child: const Text('완료'),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 8),
         ],
       ),
       body: ListView(

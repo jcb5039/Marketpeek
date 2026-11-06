@@ -40,6 +40,7 @@ server/                         시세 서버 (Cloudflare Workers 무료 플랜,
 - App Group: `group.com.yoonhyukju.marketpeek`, 키 `snapshot` (JSON 문자열).
 - 스키마는 `widget_sync.dart`의 `buildSnapshot`과 `Snapshot.swift`가 같이 정의한다. 한쪽을 바꾸면 다른 쪽도 고치고 `schemaVersion`을 올린다.
 - 위젯 kind (`CoinWidget`, `StockWidget`, `FxWidget`, `IssueWidget`)는 Dart `widgetKinds`와 Swift 정의가 일치해야 한다.
+- 코인·미국주식은 홈 목록 앞 6개(`AppState.maxWidgetItems`)까지 스냅샷에 담는다. 위젯마다 "위젯 편집"(AppIntent, `Position.swift`)에서 몇 번째부터 보일지 고르고, 사각형은 거기서 `settings.coinRows`/`stockRows`개를 보여준다.
 - 현재 위젯은 앱이 쓴 스냅샷만 읽는다. 서버(server/) 연결 후에는 위젯 타임라인에서 직접 받아오도록 바꿀 예정.
 
 ## 명령
@@ -49,7 +50,7 @@ server/                         시세 서버 (Cloudflare Workers 무료 플랜,
 - 잠금화면 위젯은 시뮬레이터/실기기에서 직접 추가해서 확인해야 한다 (자동 검증 불가).
 
 ## 주의
-- iOS 최소 버전 16.0 (잠금화면 위젯 요구사항).
+- iOS 최소 버전: 앱 16.0, 위젯 확장 17.0 (위젯별 설정에 AppIntentConfiguration 사용. WidgetBundle은 `if #available`에 else를 못 써서 16/17 분기 불가).
 - Runner의 "Embed Foundation Extensions" 단계는 "Thin Binary"보다 앞에 있어야 한다 (뒤에 있으면 빌드 사이클 오류).
 - 위젯 타깃은 Flutter/Debug·Release.xcconfig를 base config로 써서 앱과 같은 버전(FLUTTER_BUILD_NAME/NUMBER)을 갖는다.
 - 번들 ID `com.yoonhyukju.marketpeek`, 서명은 개인 팀(5R86F56Q4T, 무료). 번들 ID·App Group을 바꾸면 pbxproj, 두 entitlements, Dart `WidgetSync.appGroupId`, Swift `Snapshot.appGroupId`를 함께 고친다.

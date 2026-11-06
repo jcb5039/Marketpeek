@@ -6,6 +6,28 @@ import WidgetKit
 struct SnapshotEntry: TimelineEntry {
     let date: Date
     let snapshot: Snapshot?
+    /// 이 위젯이 보여줄 첫 종목의 위치(0부터). "위젯 편집"의 표시 순서에서 온다.
+    var offset: Int = 0
+    /// 코인 사각형(2칸)을 가격 없이 "이름·등락률 2개"로 보여줄지. 코인 위젯 편집에서 고른다.
+    var changeOnly: Bool = false
+}
+
+extension SnapshotEntry {
+    /// 미국장 상태는 시각에 따라 바뀌므로 엔트리마다 다시 계산되게 15분 간격 엔트리를 만든다.
+    static func timeline(offset: Int = 0, changeOnly: Bool = false) -> Timeline<SnapshotEntry> {
+        let snap = Snapshot.load()
+        let now = Date()
+        let entries = (0..<4).map { i in
+            SnapshotEntry(date: now.addingTimeInterval(Double(i) * 15 * 60), snapshot: snap,
+                          offset: offset, changeOnly: changeOnly)
+        }
+        return Timeline(entries: entries, policy: .after(now.addingTimeInterval(60 * 60)))
+    }
+
+    static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false) -> SnapshotEntry {
+        let snap = isPreview ? (Snapshot.load() ?? .placeholder) : Snapshot.load()
+        return SnapshotEntry(date: .now, snapshot: snap, offset: offset, changeOnly: changeOnly)
+    }
 }
 
 /// 4종 위젯이 공유하는 타임라인 공급자.
@@ -19,18 +41,11 @@ struct SnapshotProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (SnapshotEntry) -> Void) {
-        let snap = context.isPreview ? (Snapshot.load() ?? .placeholder) : Snapshot.load()
-        completion(SnapshotEntry(date: .now, snapshot: snap))
+        completion(.current(isPreview: context.isPreview))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SnapshotEntry>) -> Void) {
-        let snap = Snapshot.load()
-        let now = Date()
-        // 미국장 상태는 시각에 따라 바뀌므로 엔트리마다 다시 계산되게 15분 간격 엔트리를 만든다.
-        let entries = (0..<4).map { i in
-            SnapshotEntry(date: now.addingTimeInterval(Double(i) * 15 * 60), snapshot: snap)
-        }
-        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(60 * 60))))
+        completion(SnapshotEntry.timeline())
     }
 }
 
@@ -43,6 +58,13 @@ enum Fmt {
         guard let pct else { return "—" }
         let sign = pct > 0 ? "+" : (pct < 0 ? "-" : "")
         return "\(sign)\(String(format: "%.2f", abs(pct)))%"
+    }
+
+    /// 작은 칸용: 소수 첫째 자리. "+2.5%"
+    static func changeShort(_ pct: Double?) -> String {
+        guard let pct else { return "—" }
+        let sign = pct > 0 ? "+" : (pct < 0 ? "-" : "")
+        return "\(sign)\(String(format: "%.1f", abs(pct)))%"
     }
 
     static func dropWon(_ s: String?) -> String? {
@@ -121,8 +143,12 @@ struct ChangeText: View {
 
     var body: some View {
         Text(Fmt.change(pct))
-            .foregroundStyle(renderingMode == .fullColor ? Fmt.color(pct, scheme: scheme) : .primary)
+            .foregroundStyle(Self.style(pct, scheme: scheme, renderingMode: renderingMode))
             .trend(pct)
+    }
+
+    static func style(_ pct: Double?, scheme: String, renderingMode: WidgetRenderingMode) -> Color {
+        renderingMode == .fullColor ? Fmt.color(pct, scheme: scheme) : .primary
     }
 }
 
@@ -209,6 +235,73 @@ struct CircularQuote: View {
     }
 }
 
+/// 작은 칸(원형 자리) 1칸에 코인 2개를 사각형으로: 한 줄에 심볼 + 등락률.
+/// 칸 크기가 작아 가격과 한글 이름은 빼고, 원 대신 둥근 사각형 배경을 그린다.
+struct SmallSquareQuotes: View {
+    struct Item: Hashable {
+        var symbol: String
+        var change: Double?
+    }
+
+    let items: [Item]
+    let scheme: String
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.white.opacity(0.18))
+            // 작은 칸은 원 모양으로 잘리므로 두 줄을 가운데(가장 넓은 곳)로 모은다.
+            // 등락률은 소수 첫째 자리까지, 자리가 모자라면 심볼부터 줄인다.
+            VStack(spacing: 1) {
+                ForEach(items, id: \.self) { item in
+                    HStack(spacing: 2) {
+                        Text(item.symbol)
+                            .font(.system(size: 12, weight: .bold))
+                            .minimumScaleFactor(0.5)
+                        Spacer(minLength: 0)
+                        Text(Fmt.changeShort(item.change))
+                            .font(.system(size: 11))
+                            .monospacedDigit()
+                            .foregroundStyle(ChangeText.style(item.change, scheme: scheme, renderingMode: renderingMode))
+                            .trend(item.change)
+                            .minimumScaleFactor(0.6)
+                            .layoutPriority(1)
+                    }
+                }
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+        }
+    }
+
+    @Environment(\.widgetRenderingMode) private var renderingMode
+}
+
+/// 코인 사각형(가로 2칸)의 "이름·등락률" 모드: 코인 2개를 한 줄씩, 가격 없이 크게.
+struct ChangeOnlyRows: View {
+    let items: [SmallSquareQuotes.Item]
+    let scheme: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ForEach(items, id: \.self) { item in
+                HStack(spacing: 6) {
+                    Text(item.symbol).font(.system(size: 17, weight: .bold))
+                    Spacer(minLength: 0)
+                    ChangeText(pct: item.change, scheme: scheme)
+                        .font(.system(size: 16))
+                        .monospacedDigit()
+                        .layoutPriority(1)
+                }
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 /// 앱에서 아직 설정하지 않았을 때.
 struct EmptyHint: View {
     let title: String
@@ -225,12 +318,24 @@ struct EmptyHint: View {
 
 extension View {
     /// iOS 17+는 containerBackground가 필수. 잠금화면은 시스템 배경을 쓴다.
-    @ViewBuilder
-    func widgetBackground() -> some View {
-        if #available(iOSApplicationExtension 17.0, *) {
-            containerBackground(for: .widget) { AccessoryWidgetBackground() }
-        } else {
-            self
+    /// [squareSmall]이면 작은 칸(accessoryCircular)에서 원형 배경을 깔지 않는다
+    /// (코인 작은 사각형 위젯이 직접 사각형 배경을 그린다).
+    func widgetBackground(squareSmall: Bool = false) -> some View {
+        modifier(WidgetBackground(squareSmall: squareSmall))
+    }
+}
+
+private struct WidgetBackground: ViewModifier {
+    let squareSmall: Bool
+    @Environment(\.widgetFamily) private var family
+
+    func body(content: Content) -> some View {
+        content.containerBackground(for: .widget) {
+            if squareSmall && family == .accessoryCircular {
+                Color.clear
+            } else {
+                AccessoryWidgetBackground()
+            }
         }
     }
 }

@@ -6,8 +6,16 @@ import WidgetKit
 // 잠금화면 위젯 크기 (2주차 실기기 검증 대상):
 //  - accessoryRectangular: 시계 아래 2칸. 4종 모두. 종목은 최대 3줄(3줄이면 제목 줄 생략될 수 있음).
 //  - accessoryInline: 시계 위 한 줄(날짜 옆). 4종 모두.
-//  - accessoryCircular: 시계 아래 1칸. 코인/미국주식/환율 첫 항목.
+//  - accessoryCircular: 시계 아래 1칸. 코인은 둥근 사각형에 2개(심볼·등락률), 미국주식/환율은 원형 1개.
 //  iOS 잠금화면 시계 아래는 4칸이 한도: 직사각형 2개 / 직사각형 1 + 원형 2 / 원형 4.
+//
+// 코인·미국주식은 "위젯 편집"으로 몇 번째 종목부터 보일지 고른다(Position.swift).
+// 위젯 확장은 iOS 17+ (AppIntentConfiguration). 앱 본체는 16.0부터 설치된다.
+
+/// 위젯 편집 순서가 가리키는 종목이 없을 때의 안내.
+private func missingMessage(_ offset: Int, noun: String) -> String {
+    offset == 0 ? "앱에서 \(noun)을 추가하세요" : "\(offset + 1)번째 \(noun)을 앱에서 추가하세요"
+}
 
 // MARK: - 코인
 
@@ -15,11 +23,11 @@ struct CoinWidget: Widget {
     let kind = "CoinWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: SnapshotProvider()) { entry in
-            CoinWidgetView(entry: entry).widgetBackground()
+        AppIntentConfiguration(kind: kind, intent: CoinWidgetIntent.self, provider: CoinProvider()) { entry in
+            CoinWidgetView(entry: entry).widgetBackground(squareSmall: true)
         }
         .configurationDisplayName("코인")
-        .description("고른 코인의 원화 가격과 등락률")
+        .description("고른 코인의 원화 가격과 등락률. 길게 눌러 몇 번째 코인부터 보일지 고를 수 있어요.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular])
     }
 }
@@ -29,29 +37,39 @@ struct CoinWidgetView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        if let snap = entry.snapshot, !snap.coins.isEmpty {
+        let coins = Array((entry.snapshot?.coins ?? []).dropFirst(entry.offset))
+        if let snap = entry.snapshot, let c = coins.first {
             let scheme = snap.settings.colorScheme
+            let rows = Array(coins.prefix(snap.settings.coinRowCount))
             switch family {
             case .accessoryInline:
-                let c = snap.coins[0]
                 Text("\(c.symbol) \(c.price ?? "—") \(Fmt.change(c.change))")
             case .accessoryCircular:
-                let c = snap.coins[0]
-                CircularQuote(symbol: c.symbol, change: c.change, scheme: scheme)
+                SmallSquareQuotes(
+                    items: coins.prefix(2).map { .init(symbol: $0.symbol, change: $0.change) },
+                    scheme: scheme
+                )
             default:
-                HeaderedRows {
-                    WidgetHeader(title: "코인", snapshot: snap)
-                } rows: {
-                    PriceGrid(variants: [
-                        // 1) 100,000,000원  2) 100,000,000  3) 1억
-                        snap.coins.map { PriceRow(symbol: $0.symbol, price: $0.price ?? "—", change: $0.change) },
-                        snap.coins.map { PriceRow(symbol: $0.symbol, price: Fmt.dropWon($0.price) ?? "—", change: $0.change) },
-                        snap.coins.map { PriceRow(symbol: $0.symbol, price: $0.priceShort ?? Fmt.dropWon($0.price) ?? "—", change: $0.change) },
-                    ], scheme: scheme)
+                if entry.changeOnly {
+                    ChangeOnlyRows(
+                        items: coins.prefix(2).map { .init(symbol: $0.symbol, change: $0.change) },
+                        scheme: scheme
+                    )
+                } else {
+                    HeaderedRows {
+                        WidgetHeader(title: "코인", snapshot: snap)
+                    } rows: {
+                        PriceGrid(variants: [
+                            // 1) 100,000,000원  2) 100,000,000  3) 1억
+                            rows.map { PriceRow(symbol: $0.symbol, price: $0.price ?? "—", change: $0.change) },
+                            rows.map { PriceRow(symbol: $0.symbol, price: Fmt.dropWon($0.price) ?? "—", change: $0.change) },
+                            rows.map { PriceRow(symbol: $0.symbol, price: $0.priceShort ?? Fmt.dropWon($0.price) ?? "—", change: $0.change) },
+                        ], scheme: scheme)
+                    }
                 }
             }
         } else {
-            EmptyHint(title: "코인", message: "앱에서 코인을 추가하세요")
+            EmptyHint(title: "코인", message: missingMessage(entry.offset, noun: "코인"))
         }
     }
 }
@@ -62,11 +80,11 @@ struct StockWidget: Widget {
     let kind = "StockWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: SnapshotProvider()) { entry in
+        AppIntentConfiguration(kind: kind, intent: ListPositionIntent.self, provider: PositionProvider()) { entry in
             StockWidgetView(entry: entry).widgetBackground()
         }
         .configurationDisplayName("미국주식")
-        .description("달러·원화 가격, 등락률, 미국장 상태")
+        .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 몇 번째 종목부터 보일지 고를 수 있어요.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular])
     }
 }
@@ -76,29 +94,29 @@ struct StockWidgetView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        if let snap = entry.snapshot, !snap.stocks.isEmpty {
+        let stocks = Array((entry.snapshot?.stocks ?? []).dropFirst(entry.offset))
+        if let snap = entry.snapshot, let st = stocks.first {
             let s = snap.settings
+            let rows = Array(stocks.prefix(s.stockRowCount))
             let title = s.showMarketStatus ? "미국주식 · \(MarketHours.label(at: entry.date))" : "미국주식"
             switch family {
             case .accessoryInline:
-                let st = snap.stocks[0]
                 Text("\(st.ticker) \(st.priceUsd ?? "—") \(Fmt.change(st.change))")
             case .accessoryCircular:
-                let st = snap.stocks[0]
                 CircularQuote(symbol: st.ticker, change: st.change, scheme: s.colorScheme)
             default:
                 HeaderedRows {
                     WidgetHeader(title: title, snapshot: snap)
                 } rows: {
-                    if snap.stocks.count == 1 {
-                        single(snap.stocks[0], s)
+                    if rows.count == 1 {
+                        single(st, s)
                     } else {
-                        PriceGrid(variants: stockVariants(snap.stocks, s), scheme: s.colorScheme)
+                        PriceGrid(variants: stockVariants(rows, s), scheme: s.colorScheme)
                     }
                 }
             }
         } else {
-            EmptyHint(title: "미국주식", message: "앱에서 종목을 추가하세요")
+            EmptyHint(title: "미국주식", message: missingMessage(entry.offset, noun: "종목"))
         }
     }
 
@@ -256,30 +274,23 @@ struct MarketPeekWidgetBundle: WidgetBundle {
 #if DEBUG
 private let previewEntry = SnapshotEntry(date: .now, snapshot: .placeholder)
 private let emptyEntry = SnapshotEntry(date: .now, snapshot: nil)
+/// 위젯 편집에서 "4번째부터"를 고른 경우.
+private let fourthEntry = SnapshotEntry(date: .now, snapshot: .placeholder, offset: 3)
+/// 위젯 편집에서 "이름·등락률 2개"를 고른 경우.
+private let changeOnlyEntry = SnapshotEntry(date: .now, snapshot: .placeholder, changeOnly: true)
 
-@available(iOS 17.0, *)
-#Preview("코인 · 사각형", as: .accessoryRectangular) { CoinWidget() } timeline: { previewEntry; emptyEntry }
-@available(iOS 17.0, *)
+#Preview("코인 · 사각형", as: .accessoryRectangular) { CoinWidget() } timeline: { previewEntry; changeOnlyEntry; fourthEntry; emptyEntry }
 #Preview("코인 · 한 줄", as: .accessoryInline) { CoinWidget() } timeline: { previewEntry }
-@available(iOS 17.0, *)
-#Preview("코인 · 원형", as: .accessoryCircular) { CoinWidget() } timeline: { previewEntry }
+#Preview("코인 · 작은 사각형", as: .accessoryCircular) { CoinWidget() } timeline: { previewEntry; fourthEntry }
 
-@available(iOS 17.0, *)
 #Preview("미국주식 · 사각형", as: .accessoryRectangular) { StockWidget() } timeline: { previewEntry; emptyEntry }
-@available(iOS 17.0, *)
 #Preview("미국주식 · 한 줄", as: .accessoryInline) { StockWidget() } timeline: { previewEntry }
-@available(iOS 17.0, *)
 #Preview("미국주식 · 원형", as: .accessoryCircular) { StockWidget() } timeline: { previewEntry }
 
-@available(iOS 17.0, *)
 #Preview("환율 · 사각형", as: .accessoryRectangular) { FxWidget() } timeline: { previewEntry; emptyEntry }
-@available(iOS 17.0, *)
 #Preview("환율 · 한 줄", as: .accessoryInline) { FxWidget() } timeline: { previewEntry }
-@available(iOS 17.0, *)
 #Preview("환율 · 원형", as: .accessoryCircular) { FxWidget() } timeline: { previewEntry }
 
-@available(iOS 17.0, *)
 #Preview("AI 이슈 · 사각형", as: .accessoryRectangular) { IssueWidget() } timeline: { previewEntry; emptyEntry }
-@available(iOS 17.0, *)
 #Preview("AI 이슈 · 한 줄", as: .accessoryInline) { IssueWidget() } timeline: { previewEntry }
 #endif

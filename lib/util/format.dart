@@ -6,8 +6,17 @@ final _krw = NumberFormat('#,##0', 'ko_KR');
 final _krw2 = NumberFormat('#,##0.00', 'ko_KR');
 final _usd = NumberFormat('#,##0.00', 'en_US');
 
-/// 원화 가격. 100원 미만 소액(코인·환율)은 소수점 둘째 자리까지.
-String formatKrw(double v) => '${v.abs() < 100 ? _krw2.format(v) : _krw.format(v)}원';
+/// 원화 가격. 100원 미만 소액(코인·환율)은 소수점 둘째 자리까지,
+/// 1원 미만 코인(예: PEPE 0.00694원)은 유효숫자 4자리까지.
+String formatKrw(double v) => '${_krwNumber(v)}원';
+
+String _krwNumber(double v) {
+  final a = v.abs();
+  if (a > 0 && a < 1) {
+    return v.toStringAsPrecision(4).replaceFirst(RegExp(r'\.?0+$'), '');
+  }
+  return a < 100 ? _krw2.format(v) : _krw.format(v);
+}
 
 String formatUsd(double v) => '\$${_usd.format(v)}';
 
@@ -39,5 +48,5 @@ String formatKrwShort(double v) {
   final a = v.abs();
   if (a >= 1e8) return '${trim((v / 1e8).toStringAsFixed(2))}억';
   if (a >= 1e5) return '${trim((v / 1e4).toStringAsFixed(a >= 1e6 ? 0 : 1))}만';
-  return a < 100 ? _krw2.format(v) : _krw.format(v);
+  return _krwNumber(v);
 }

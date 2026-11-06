@@ -23,7 +23,11 @@ class WidgetsScreen extends StatelessWidget {
         children: [
           const Padding(
             padding: EdgeInsets.fromLTRB(4, 0, 4, 16),
-            child: Text('필요한 위젯만 골라서 잠금화면에 추가하세요. 시계 위 한 줄 칸에도 하나 더 넣을 수 있어요.', style: TextStyles.sub),
+            child: Text(
+              '필요한 위젯만 골라서 잠금화면에 추가하세요. 시계 위 한 줄 칸에도 하나 더 넣을 수 있어요.\n'
+              '코인·미국주식은 같은 위젯을 여러 개 놓고, 위젯을 길게 눌러 "위젯 편집"에서 몇 번째부터 보일지 고르세요.',
+              style: TextStyles.sub,
+            ),
           ),
           _WidgetCard(
             preview: _CoinPreview(state: s),

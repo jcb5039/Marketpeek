@@ -23,6 +23,7 @@
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		CB6F9298C4EE64946EFF7AFD /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DBD78766BE492C0BA86F8BF5 /* SwiftUI.framework */; };
 		F1C5F90640A4E02D9EC5A705 /* MarketHours.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A9B2B6DDEA176BF4C990322 /* MarketHours.swift */; };
+		A1B2C3D4E5F6A7B8C9D0E1F2 /* Position.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7B8C9D0E1F2A3 /* Position.swift */; };
 		FEE8C3AC5ED7C5E55C7FC9F3 /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB2E426D9A36B497E4D91E24 /* Snapshot.swift */; };
 /* End PBXBuildFile section */
 
@@ -80,6 +81,7 @@
 		7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		78E0A7A72DC9AD7400C4905E /* FlutterGeneratedPluginSwiftPackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = FlutterGeneratedPluginSwiftPackage; path = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage; sourceTree = "<group>"; };
 		7A9B2B6DDEA176BF4C990322 /* MarketHours.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MarketHours.swift; sourceTree = "<group>"; };
+		B2C3D4E5F6A7B8C9D0E1F2A3 /* Position.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Position.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		83E0F61E5C4070D6AEB1503A /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		8A0305CA62D15E94FE1A072F /* Shared.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Shared.swift; sourceTree = "<group>"; };
@@ -153,6 +155,7 @@
 				8A0305CA62D15E94FE1A072F /* Shared.swift */,
 				DB2E426D9A36B497E4D91E24 /* Snapshot.swift */,
 				7A9B2B6DDEA176BF4C990322 /* MarketHours.swift */,
+				B2C3D4E5F6A7B8C9D0E1F2A3 /* Position.swift */,
 				F8477318AA7C7840958E2DED /* Info.plist */,
 				4E90A1A7725DFFE85EA12848 /* MarketPeekWidget.entitlements */,
 			);
@@ -387,6 +390,7 @@
 				4C7C499825287F34C1F5556D /* Shared.swift in Sources */,
 				FEE8C3AC5ED7C5E55C7FC9F3 /* Snapshot.swift in Sources */,
 				F1C5F90640A4E02D9EC5A705 /* MarketHours.swift in Sources */,
+				A1B2C3D4E5F6A7B8C9D0E1F2 /* Position.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -455,7 +459,7 @@
 				DEVELOPMENT_TEAM = 5R86F56Q4T;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MarketPeekWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -558,7 +562,7 @@
 				DEVELOPMENT_TEAM = 5R86F56Q4T;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MarketPeekWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -635,7 +639,7 @@
 				DEVELOPMENT_TEAM = 5R86F56Q4T;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MarketPeekWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
