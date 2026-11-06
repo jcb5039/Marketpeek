@@ -97,6 +97,7 @@ struct PriceGrid: View {
                 GridRow {
                     Text(r.symbol).font(.caption.weight(.bold))
                     Text(r.price).font(.caption).monospacedDigit()
+                        .trend(r.change)
                         .gridColumnAlignment(.trailing)
                     if let extra = r.extra {
                         Text(extra).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
@@ -112,6 +113,7 @@ struct PriceGrid: View {
 }
 
 /// 등락률 텍스트. 풀컬러로 그려지는 곳(StandBy 등)에서만 색이 보인다.
+/// 잠금화면(단색)에서는 [TrendEmphasis]의 굵기·밝기로 오르내림을 구분한다.
 struct ChangeText: View {
     let pct: Double?
     let scheme: String
@@ -120,7 +122,36 @@ struct ChangeText: View {
     var body: some View {
         Text(Fmt.change(pct))
             .foregroundStyle(renderingMode == .fullColor ? Fmt.color(pct, scheme: scheme) : .primary)
+            .trend(pct)
     }
+}
+
+/// 잠금화면 위젯은 단색이라 빨강·파랑을 못 쓴다. 대신 숫자(가격·등락률)를
+/// 상승은 굵고 진하게, 하락은 가늘고 흐리게, 보합·값 없음은 그 중간으로 그린다.
+/// 굵기는 어디서나, 밝기는 단색 렌더링일 때만 바꾼다(풀컬러에서는 색이 그 역할을 한다).
+struct TrendEmphasis: ViewModifier {
+    let pct: Double?
+    @Environment(\.widgetRenderingMode) private var renderingMode
+
+    func body(content: Content) -> some View {
+        content
+            .fontWeight(weight)
+            .opacity(renderingMode == .fullColor ? 1 : opacity)
+    }
+
+    private var weight: Font.Weight {
+        guard let pct, pct != 0 else { return .medium }
+        return pct > 0 ? .heavy : .regular
+    }
+
+    private var opacity: Double {
+        guard let pct, pct != 0 else { return 0.75 }
+        return pct > 0 ? 1 : 0.5
+    }
+}
+
+extension View {
+    func trend(_ pct: Double?) -> some View { modifier(TrendEmphasis(pct: pct)) }
 }
 
 /// 위젯 공통 헤더: "코인 ········ 15:30"
@@ -169,7 +200,7 @@ struct CircularQuote: View {
             AccessoryWidgetBackground()
             VStack(spacing: 0) {
                 Text(symbol).font(.system(size: 12, weight: .bold))
-                ChangeText(pct: change, scheme: scheme).font(.system(size: 10, weight: .semibold))
+                ChangeText(pct: change, scheme: scheme).font(.system(size: 10))
             }
             .lineLimit(1)
             .minimumScaleFactor(0.5)

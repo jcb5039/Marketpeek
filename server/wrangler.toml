@@ -1,0 +1,22 @@
+# MarketPeek 시세 서버 (Cloudflare Workers 무료 플랜).
+# 5분마다 미국주식·환율을 받아 KV에 캐시하고, 앱은 GET /quotes로 캐시된 값만 읽는다.
+name = "marketpeek-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+[triggers]
+# 무료 플랜 KV 쓰기 한도는 하루 1,000회. 5분마다 주식 1회(288) + 환율 1시간마다 1회(24) = 312회.
+crons = ["*/5 * * * *"]
+
+[[kv_namespaces]]
+binding = "QUOTES"
+# `npx wrangler kv namespace create QUOTES`로 만든 id (계정마다 다름).
+id = "ab992677e1c5453883ef5e7eaa2ca8fa"
+
+[vars]
+# 캐시할 종목·통화. 앱 lib/data/catalog.dart 목록과 맞춘다.
+STOCK_TICKERS = "AAPL,AMZN,AMD,ABNB,TSLA,NVDA,MSFT,GOOGL,META,QQQ,SPY"
+FX_CODES = "USD,JPY,EUR,THB,CNY"
+
+# 비밀 키는 여기 적지 않는다. 배포용: npx wrangler secret put FINNHUB_API_KEY
+# 로컬용: .dev.vars 파일 (git에 올리지 않음, .dev.vars.example 참고)
