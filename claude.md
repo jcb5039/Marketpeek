@@ -23,22 +23,28 @@ lib/
   models/models.dart            도메인 모델
   data/catalog.dart             검색 가능한 코인·종목·통화 목록 (서버 연결 전 하드코딩)
   data/quote_repository.dart    QuoteRepository 인터페이스 + MockQuoteRepository (기획서 예시값, 실제 시세 아님)
+  data/upbit_quote_repository.dart   코인: 업비트 공개 API (키 없음). 나머지는 fallback에 위임
+  data/server_quote_repository.dart  미국주식·환율·AI 이슈: 우리 서버(server/) GET /quotes
   state/app_state.dart          설정·목록·시세 상태 (ChangeNotifier, shared_preferences 저장)
   widget_bridge/widget_sync.dart  App Group에 위젯 스냅샷 JSON 쓰기 + 타임라인 리로드
   util/format.dart              가격·환율·등락률 표기
   util/market_hours.dart        미국장 상태 (Swift MarketHours.swift와 같은 규칙)
   ui/                           홈/검색/환율/위젯 안내/설정 화면 (다크 테마, lib/app/theme.dart)
 ios/MarketPeekWidget/           WidgetKit 확장 (SwiftUI). Widgets.swift에 4종 위젯 + 번들
+server/                         시세 서버 (Cloudflare Workers 무료 플랜, TypeScript). 설정 방법은 server/README.md
 ```
+- 앱 시세 구성(`main.dart`): `UpbitQuoteRepository(fallback: ServerQuoteRepository 또는 MockQuoteRepository)`.
+  서버 주소는 `--dart-define=API_BASE_URL=...`로 넣고, 없으면 미국주식·환율·이슈는 예시 값.
 
 ### Flutter ↔ 위젯 데이터 계약
 - App Group: `group.com.yoonhyukju.marketpeek`, 키 `snapshot` (JSON 문자열).
 - 스키마는 `widget_sync.dart`의 `buildSnapshot`과 `Snapshot.swift`가 같이 정의한다. 한쪽을 바꾸면 다른 쪽도 고치고 `schemaVersion`을 올린다.
 - 위젯 kind (`CoinWidget`, `StockWidget`, `FxWidget`, `IssueWidget`)는 Dart `widgetKinds`와 Swift 정의가 일치해야 한다.
-- 현재 위젯은 앱이 쓴 스냅샷만 읽는다. 서버(Firebase) 연결 후에는 위젯 타임라인에서 직접 받아오도록 바꿀 예정.
+- 현재 위젯은 앱이 쓴 스냅샷만 읽는다. 서버(server/) 연결 후에는 위젯 타임라인에서 직접 받아오도록 바꿀 예정.
 
 ## 명령
 - `flutter analyze` / `flutter test`
+- 서버: `cd server && npm test` / `npm run typecheck` / `npm run dev` / `npm run deploy`
 - `flutter build ios --simulator --debug` → `xcrun simctl install booted build/ios/iphonesimulator/Runner.app`
 - 잠금화면 위젯은 시뮬레이터/실기기에서 직접 추가해서 확인해야 한다 (자동 검증 불가).
 

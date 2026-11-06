@@ -111,7 +111,7 @@ struct StockWidgetView: View {
                 ChangeText(pct: st.change, scheme: s.colorScheme).font(.caption2)
             }
             HStack(spacing: 4) {
-                Text(st.priceUsd ?? "—").font(.caption)
+                Text(st.priceUsd ?? "—").font(.caption).trend(st.change)
                 if s.showStockKrw {
                     Text(st.priceKrw ?? "—").font(.caption2).foregroundStyle(.secondary)
                 }
@@ -164,7 +164,8 @@ struct FxWidgetView: View {
                     AccessoryWidgetBackground()
                     VStack(spacing: 0) {
                         Text(fx.code).font(.system(size: 12, weight: .bold))
-                        Text(Fmt.dropWon(fx.rate) ?? "—").font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                        Text(Fmt.dropWon(fx.rate) ?? "—").font(.system(size: 11)).monospacedDigit()
+                            .trend(fx.change)
                     }
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
@@ -175,6 +176,7 @@ struct FxWidgetView: View {
                     WidgetHeader(title: "환율 · \(pair)", snapshot: snap)
                     Text(fx.rate ?? "—")
                         .font(.headline)
+                        .trend(fx.change)
                         .minimumScaleFactor(0.7)
                     ChangeText(pct: fx.change, scheme: scheme).font(.caption2)
                 }
@@ -246,3 +248,38 @@ struct MarketPeekWidgetBundle: WidgetBundle {
         IssueWidget()
     }
 }
+
+// MARK: - Previews
+// Xcode Canvas(⌥⌘↩)에서 위젯 4종을 크기별로 확인한다. 값은 Snapshot.placeholder 예시.
+// 사각형 미리보기는 두 번째 엔트리(snapshot: nil)로 빈 상태도 볼 수 있다.
+
+#if DEBUG
+private let previewEntry = SnapshotEntry(date: .now, snapshot: .placeholder)
+private let emptyEntry = SnapshotEntry(date: .now, snapshot: nil)
+
+@available(iOS 17.0, *)
+#Preview("코인 · 사각형", as: .accessoryRectangular) { CoinWidget() } timeline: { previewEntry; emptyEntry }
+@available(iOS 17.0, *)
+#Preview("코인 · 한 줄", as: .accessoryInline) { CoinWidget() } timeline: { previewEntry }
+@available(iOS 17.0, *)
+#Preview("코인 · 원형", as: .accessoryCircular) { CoinWidget() } timeline: { previewEntry }
+
+@available(iOS 17.0, *)
+#Preview("미국주식 · 사각형", as: .accessoryRectangular) { StockWidget() } timeline: { previewEntry; emptyEntry }
+@available(iOS 17.0, *)
+#Preview("미국주식 · 한 줄", as: .accessoryInline) { StockWidget() } timeline: { previewEntry }
+@available(iOS 17.0, *)
+#Preview("미국주식 · 원형", as: .accessoryCircular) { StockWidget() } timeline: { previewEntry }
+
+@available(iOS 17.0, *)
+#Preview("환율 · 사각형", as: .accessoryRectangular) { FxWidget() } timeline: { previewEntry; emptyEntry }
+@available(iOS 17.0, *)
+#Preview("환율 · 한 줄", as: .accessoryInline) { FxWidget() } timeline: { previewEntry }
+@available(iOS 17.0, *)
+#Preview("환율 · 원형", as: .accessoryCircular) { FxWidget() } timeline: { previewEntry }
+
+@available(iOS 17.0, *)
+#Preview("AI 이슈 · 사각형", as: .accessoryRectangular) { IssueWidget() } timeline: { previewEntry; emptyEntry }
+@available(iOS 17.0, *)
+#Preview("AI 이슈 · 한 줄", as: .accessoryInline) { IssueWidget() } timeline: { previewEntry }
+#endif
