@@ -235,42 +235,35 @@ struct CircularQuote: View {
     }
 }
 
-/// 작은 칸(원형 자리) 1칸에 코인 2개를 사각형으로: 한 줄에 심볼 + 등락률.
+/// 작은 칸(원형 자리) 1칸에 코인 1개를 사각형으로: 위에 심볼, 아래에 등락률.
 /// 칸 크기가 작아 가격과 한글 이름은 빼고, 원 대신 둥근 사각형 배경을 그린다.
-struct SmallSquareQuotes: View {
+struct SmallSquareQuote: View {
     struct Item: Hashable {
         var symbol: String
         var change: Double?
     }
 
-    let items: [Item]
+    let item: Item
     let scheme: String
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(.white.opacity(0.18))
-            // 작은 칸은 원 모양으로 잘리므로 두 줄을 가운데(가장 넓은 곳)로 모은다.
-            // 등락률은 소수 첫째 자리까지, 자리가 모자라면 심볼부터 줄인다.
+            // 등락률은 소수 첫째 자리까지, 자리가 모자라면 글자를 줄인다.
             VStack(spacing: 1) {
-                ForEach(items, id: \.self) { item in
-                    HStack(spacing: 2) {
-                        Text(item.symbol)
-                            .font(.system(size: 12, weight: .bold))
-                            .minimumScaleFactor(0.5)
-                        Spacer(minLength: 0)
-                        Text(Fmt.changeShort(item.change))
-                            .font(.system(size: 11))
-                            .monospacedDigit()
-                            .foregroundStyle(ChangeText.style(item.change, scheme: scheme, renderingMode: renderingMode))
-                            .trend(item.change)
-                            .minimumScaleFactor(0.6)
-                            .layoutPriority(1)
-                    }
-                }
+                Text(item.symbol)
+                    .font(.system(size: 13, weight: .bold))
+                    .minimumScaleFactor(0.5)
+                Text(Fmt.changeShort(item.change))
+                    .font(.system(size: 12))
+                    .monospacedDigit()
+                    .foregroundStyle(ChangeText.style(item.change, scheme: scheme, renderingMode: renderingMode))
+                    .trend(item.change)
+                    .minimumScaleFactor(0.6)
             }
             .lineLimit(1)
-            .padding(.horizontal, 7)
+            .padding(.horizontal, 5)
         }
     }
 
@@ -279,7 +272,7 @@ struct SmallSquareQuotes: View {
 
 /// 코인 사각형(가로 2칸)의 "이름·등락률" 모드: 코인 2개를 한 줄씩, 가격 없이 크게.
 struct ChangeOnlyRows: View {
-    let items: [SmallSquareQuotes.Item]
+    let items: [SmallSquareQuote.Item]
     let scheme: String
 
     var body: some View {

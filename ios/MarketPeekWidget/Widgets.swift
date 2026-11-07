@@ -6,7 +6,7 @@ import WidgetKit
 // 잠금화면 위젯 크기 (2주차 실기기 검증 대상):
 //  - accessoryRectangular: 시계 아래 2칸. 4종 모두. 종목은 최대 3줄(3줄이면 제목 줄 생략될 수 있음).
 //  - accessoryInline: 시계 위 한 줄(날짜 옆). 4종 모두.
-//  - accessoryCircular: 시계 아래 1칸. 코인은 둥근 사각형에 2개(심볼·등락률), 미국주식/환율은 원형 1개.
+//  - accessoryCircular: 시계 아래 1칸. 코인은 둥근 사각형에 1개(심볼 위·등락률 아래), 미국주식/환율은 원형 1개.
 //  iOS 잠금화면 시계 아래는 4칸이 한도: 직사각형 2개 / 직사각형 1 + 원형 2 / 원형 4.
 //
 // 코인·미국주식은 "위젯 편집"으로 몇 번째 종목부터 보일지 고른다(Position.swift).
@@ -45,10 +45,7 @@ struct CoinWidgetView: View {
             case .accessoryInline:
                 Text("\(c.symbol) \(c.price ?? "—") \(Fmt.change(c.change))")
             case .accessoryCircular:
-                SmallSquareQuotes(
-                    items: coins.prefix(2).map { .init(symbol: $0.symbol, change: $0.change) },
-                    scheme: scheme
-                )
+                SmallSquareQuote(item: .init(symbol: c.symbol, change: c.change), scheme: scheme)
             default:
                 if entry.changeOnly {
                     ChangeOnlyRows(
