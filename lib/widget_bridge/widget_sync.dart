@@ -16,7 +16,7 @@ import '../util/format.dart';
 class WidgetSync {
   static const appGroupId = 'group.com.yoonhyukju.marketpeek';
   static const snapshotKey = 'snapshot';
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
 
   /// WidgetKit `kind` 값. Swift 쪽 위젯 정의와 일치해야 한다.
   static const widgetKinds = [
@@ -24,6 +24,7 @@ class WidgetSync {
     'StockWidget',
     'FxWidget',
     'IssueWidget',
+    'MixWidget',
   ];
 
   bool _initialized = false;
@@ -84,12 +85,10 @@ class WidgetSync {
         }(),
     ];
 
-    Map<String, dynamic>? fx;
-    final code = s.fxCode;
-    if (code != null) {
+    Map<String, dynamic> fxJson(String code) {
       final c = Catalog.currency(code);
       final fq = q?.fx[code];
-      fx = {
+      return {
         'code': c.code,
         'name': c.name,
         'unit': c.unit,
@@ -97,6 +96,8 @@ class WidgetSync {
         'change': fq?.changePct,
       };
     }
+
+    final code = s.fxCode;
 
     final issue = q?.issue;
 
@@ -114,7 +115,9 @@ class WidgetSync {
       },
       'coins': coins,
       'stocks': stocks,
-      'fx': fx,
+      'fx': code == null ? null : fxJson(code),
+      // v5: 앱에서 고른 통화 전체 (고른 순서). 자유 구성 위젯이 칸마다 이 중에서 고른다.
+      'fxList': [for (final c in s.fxCodes) fxJson(c)],
       'issue': issue == null
           ? null
           : {

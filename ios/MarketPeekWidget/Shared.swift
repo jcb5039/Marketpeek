@@ -10,23 +10,27 @@ struct SnapshotEntry: TimelineEntry {
     var offset: Int = 0
     /// 코인 사각형(2칸)을 가격 없이 "이름·등락률 2개"로 보여줄지. 코인 위젯 편집에서 고른다.
     var changeOnly: Bool = false
+    /// 자유 구성 위젯의 칸별 항목 id ("coin:BTC", "stock:NVDA", "fx:USD"). 위젯 편집에서 고른다.
+    var selected: [String?] = []
 }
 
 extension SnapshotEntry {
     /// 미국장 상태는 시각에 따라 바뀌므로 엔트리마다 다시 계산되게 15분 간격 엔트리를 만든다.
-    static func timeline(offset: Int = 0, changeOnly: Bool = false) -> Timeline<SnapshotEntry> {
+    static func timeline(offset: Int = 0, changeOnly: Bool = false, selected: [String?] = []) -> Timeline<SnapshotEntry> {
         let snap = Snapshot.load()
         let now = Date()
         let entries = (0..<4).map { i in
             SnapshotEntry(date: now.addingTimeInterval(Double(i) * 15 * 60), snapshot: snap,
-                          offset: offset, changeOnly: changeOnly)
+                          offset: offset, changeOnly: changeOnly, selected: selected)
         }
         return Timeline(entries: entries, policy: .after(now.addingTimeInterval(60 * 60)))
     }
 
-    static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false) -> SnapshotEntry {
+    static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false,
+                        selected: [String?] = []) -> SnapshotEntry {
         let snap = isPreview ? (Snapshot.load() ?? .placeholder) : Snapshot.load()
-        return SnapshotEntry(date: .now, snapshot: snap, offset: offset, changeOnly: changeOnly)
+        return SnapshotEntry(date: .now, snapshot: snap, offset: offset, changeOnly: changeOnly,
+                             selected: selected)
     }
 }
 
@@ -295,6 +299,54 @@ struct ChangeOnlyRows: View {
     }
 }
 
+/// 홈 화면 2×2: 제목·갱신 시각 / 심볼 크게 + 이름 / 가격 크게 (+보조 가격) / 등락률.
+/// 가격은 [prices]를 넓은 표기부터 시도해 한 줄에 들어가는 첫 번째를 쓴다.
+struct SmallHomeCard: View {
+    let title: String
+    let snapshot: Snapshot
+    let symbol: String
+    let name: String?
+    let prices: [String]
+    var secondary: String? = nil
+    let change: Double?
+    let scheme: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            WidgetHeader(title: title, snapshot: snapshot)
+            Spacer(minLength: 4)
+            Text(symbol)
+                .font(.system(size: 22, weight: .bold))
+                .minimumScaleFactor(0.6)
+            if let name {
+                Text(name).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            ViewThatFits(in: .horizontal) {
+                ForEach(prices, id: \.self) { priceText($0) }
+                priceText(prices.last ?? "—").minimumScaleFactor(0.6)
+            }
+            if let secondary {
+                Text(secondary).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    .minimumScaleFactor(0.7)
+            }
+            ChangeText(pct: change, scheme: scheme)
+                .font(.system(size: 15, weight: .semibold))
+                .monospacedDigit()
+                .padding(.top, 1)
+        }
+        .lineLimit(1)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func priceText(_ s: String) -> some View {
+        Text(s)
+            .font(.system(size: 19, weight: .semibold))
+            .monospacedDigit()
+            .trend(change)
+    }
+}
+
 /// 앱에서 아직 설정하지 않았을 때.
 struct EmptyHint: View {
     let title: String
@@ -323,6 +375,17 @@ private struct WidgetBackground: ViewModifier {
     @Environment(\.widgetFamily) private var family
 
     func body(content: Content) -> some View {
+        if family == .systemSmall {
+            // 홈 화면은 컬러로 그려진다: 앱 다크 테마와 같은 짙은 배경 + 흰 글자.
+            content
+                .environment(\.colorScheme, .dark)
+                .containerBackground(for: .widget) { Color(red: 0.11, green: 0.11, blue: 0.12) }
+        } else {
+            lockScreen(content)
+        }
+    }
+
+    private func lockScreen(_ content: Content) -> some View {
         content.containerBackground(for: .widget) {
             if squareSmall && family == .accessoryCircular {
                 Color.clear

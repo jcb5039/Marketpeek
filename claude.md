@@ -4,6 +4,8 @@ iOS 잠금화면 위젯 중심 시세 앱. 코인 · 미국주식 · 선택형 �
 기획서: "시세 위젯 앱 기획서 (환율 선택 반영본, 2026.11.01)".
 
 생각하는 중의 문장과 대답 시에는 반드시 한국어를 사용한다.
+파일 편집, 추가, 삭제는 사용자가 지시를 했을떄만 하고 지시하지 않고
+plan모드에서 물어보는 과정에서는 auto모드로 전환 할지 묻지 않는다.
 
 ## 최우선 원칙: 위젯이 제품이다
 - 앱은 "위젯에 무엇을 어떻게 보여줄지" 설정하는 도구다. 앱 화면 기능을 늘리기 전에 위젯에서 어떻게 보일지부터 판단한다.
@@ -13,6 +15,7 @@ iOS 잠금화면 위젯 중심 시세 앱. 코인 · 미국주식 · 선택형 �
 
 ## 제품 규칙 (기획서에서 자주 헷갈리는 부분)
 - 코인과 미국주식은 목록·위젯 모두 분리. 하나의 관심종목 위젯에 섞지 않는다.
+  예외: 홈 2×2 "자유 구성" 위젯(`MixWidget`)은 사용자가 위젯 편집에서 칸 3개마다 코인·주식·환율을 섞어 고른다 (2026-11-08 결정).
 - 미국주식은 USD 가격 + KRW 환산가를 함께 보여준다. **원화 환산은 환율 위젯에서 고른 통화와 무관하게 항상 USD/KRW.**
 - 환율 위젯 통화는 사용자가 선택 (USD/JPY/EUR/THB/CNY). JPY는 100단위 표기.
 - 상승·하락 색: 한국식(상승 빨강/하락 파랑, 기본) · 해외식(상승 초록/하락 빨강).
@@ -41,7 +44,7 @@ server/                         시세 서버 (Cloudflare Workers 무료 플랜,
 ### Flutter ↔ 위젯 데이터 계약
 - App Group: `group.com.yoonhyukju.marketpeek`, 키 `snapshot` (JSON 문자열).
 - 스키마는 `widget_sync.dart`의 `buildSnapshot`과 `Snapshot.swift`가 같이 정의한다. 한쪽을 바꾸면 다른 쪽도 고치고 `schemaVersion`을 올린다.
-- 위젯 kind (`CoinWidget`, `StockWidget`, `FxWidget`, `IssueWidget`)는 Dart `widgetKinds`와 Swift 정의가 일치해야 한다.
+- 위젯 kind (`CoinWidget`, `StockWidget`, `FxWidget`, `IssueWidget`, `MixWidget`)는 Dart `widgetKinds`와 Swift 정의가 일치해야 한다.
 - 코인·미국주식은 홈 목록 앞 6개(`AppState.maxWidgetItems`)까지 스냅샷에 담는다. 위젯마다 "위젯 편집"(AppIntent, `Position.swift`)에서 몇 번째부터 보일지 고르고, 사각형은 거기서 `settings.coinRows`/`stockRows`개를 보여준다.
 - 현재 위젯은 앱이 쓴 스냅샷만 읽는다. 서버(server/) 연결 후에는 위젯 타임라인에서 직접 받아오도록 바꿀 예정.
 

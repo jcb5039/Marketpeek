@@ -31,8 +31,11 @@ class AppState extends ChangeNotifier {
   List<String> coinSymbols = [];
   List<String> stockTickers = [];
 
-  /// 환율 위젯에 표시할 통화. 고르지 않았으면 null.
-  String? fxCode;
+  /// 고른 환율 통화 (고른 순서). 위젯 편집(자유 구성)에서는 이 통화들만 고를 수 있다.
+  List<String> fxCodes = [];
+
+  /// 환율 위젯에 표시할 통화 = 첫 번째로 고른 통화. 없으면 null.
+  String? get fxCode => fxCodes.isEmpty ? null : fxCodes.first;
 
   // 표시 설정
   int coinWidgetCount = 2;
@@ -62,7 +65,9 @@ class AppState extends ChangeNotifier {
     final p = _prefs = await SharedPreferences.getInstance();
     coinSymbols = p.getStringList('coins') ?? [];
     stockTickers = p.getStringList('stocks') ?? [];
-    fxCode = p.getString('fx');
+    // 예전 버전은 통화 하나만 'fx'에 저장했다.
+    final legacyFx = p.getString('fx');
+    fxCodes = p.getStringList('fxList') ?? [?legacyFx];
     coinWidgetCount = p.getInt('coinWidgetCount') ?? 2;
     stockWidgetCount = p.getInt('stockWidgetCount') ?? 1;
     showStockKrw = p.getBool('showStockKrw') ?? true;
@@ -158,9 +163,24 @@ class AppState extends ChangeNotifier {
   }
 
   // ── 환율 ──────────────────────────────────────────────
-  Future<void> setFx(String? code) async {
-    fxCode = code;
+  Future<void> addFx(String code) async {
+    if (fxCodes.contains(code)) return;
+    fxCodes = [...fxCodes, code];
     await _saveAndRefresh();
+  }
+
+  Future<void> removeFx(String code) async {
+    fxCodes = fxCodes.where((c) => c != code).toList();
+    await _saveAndRefresh(fetch: false);
+  }
+
+  /// 환율 화면에서 통화를 누를 때: 고른 통화면 빼고, 아니면 추가한다.
+  Future<void> toggleFx(String code) =>
+      fxCodes.contains(code) ? removeFx(code) : addFx(code);
+
+  Future<void> clearFx() async {
+    fxCodes = [];
+    await _saveAndRefresh(fetch: false);
   }
 
   // ── 표시 설정 ──────────────────────────────────────────
@@ -188,11 +208,8 @@ class AppState extends ChangeNotifier {
     if (p != null) {
       await p.setStringList('coins', coinSymbols);
       await p.setStringList('stocks', stockTickers);
-      if (fxCode == null) {
-        await p.remove('fx');
-      } else {
-        await p.setString('fx', fxCode!);
-      }
+      await p.setStringList('fxList', fxCodes);
+      await p.remove('fx');
       await p.setInt('coinWidgetCount', coinWidgetCount);
       await p.setInt('stockWidgetCount', stockWidgetCount);
       await p.setBool('showStockKrw', showStockKrw);

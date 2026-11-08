@@ -45,6 +45,13 @@ class WidgetsScreen extends StatelessWidget {
             description: '환율 탭에서 고른 통화의 원화 환율과 등락률',
           ),
           _IssueCard(state: s),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(4, 4, 4, 12),
+            child: Text(
+              '홈 화면에는 "자유 구성" 위젯도 있어요. 위젯을 길게 눌러 "위젯 편집"에서 칸 3개마다 코인·미국주식·환율 중 보고 싶은 것을 골라요.',
+              style: TextStyles.sub,
+            ),
+          ),
           const SizedBox(height: 8),
           OutlinedButton(
             onPressed: () => Navigator.of(context).push(

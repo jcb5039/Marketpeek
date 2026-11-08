@@ -93,12 +93,16 @@ void main() {
     test('미국주식 원화는 선택 통화와 무관하게 USD/KRW', () async {
       final s = await _state();
       await s.addStock('TSLA');
-      await s.setFx('JPY');
+      await s.addFx('JPY');
+      await s.addFx('USD');
 
       final snap = WidgetSync.buildSnapshot(s);
       expect((snap['stocks'] as List).first['priceKrw'], formatKrw(stockKrw(450, 1430.5)));
       expect((snap['fx'] as Map)['code'], 'JPY');
       expect((snap['fx'] as Map)['rate'], '950원');
+      // 자유 구성 위젯용: 앱에서 고른 통화만, 고른 순서대로 들어간다.
+      final list = (snap['fxList'] as List).map((f) => f['code']).toList();
+      expect(list, ['JPY', 'USD']);
     });
 
     test('시세가 없는 종목은 null로 전달', () async {
@@ -126,7 +130,7 @@ void main() {
     expect(find.byType(NavigationBar), findsOneWidget);
   });
 
-  testWidgets('환율: 고른 통화를 다시 누르면 선택이 풀리고, 완료로 닫힌다', (tester) async {
+  testWidgets('환율: 여러 통화를 고르고, 다시 누르면 빠지고, 완료로 닫힌다', (tester) async {
     final s = AppState(repository: MockQuoteRepository(), widgetSync: _NoopSync());
     await tester.runAsync(s.load);
     await tester.pumpWidget(AppScope(
@@ -151,9 +155,13 @@ void main() {
     }
 
     await tapUsd();
-    expect(s.fxCode, 'USD');
+    expect(s.fxCodes, ['USD']);
+    await tester.tap(find.text('일본 엔 JPY'));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    await tester.pumpAndSettle();
+    expect(s.fxCodes, ['USD', 'JPY']);
     await tapUsd();
-    expect(s.fxCode, isNull);
+    expect(s.fxCodes, ['JPY']);
 
     await tester.tap(find.text('완료'));
     await tester.pumpAndSettle();

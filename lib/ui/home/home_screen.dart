@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_scope.dart';
 import '../../app/theme.dart';
 import '../../data/catalog.dart';
+import '../../models/models.dart';
 import '../../state/app_state.dart';
 import '../../util/format.dart';
 import '../../util/market_hours.dart';
@@ -301,8 +302,8 @@ class _FxCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final code = state.fxCode;
-    if (code == null) {
+    final codes = state.fxCodes;
+    if (codes.isEmpty) {
       return SurfaceCard(
         onTap: () => _openCurrency(context),
         child: const Row(children: [
@@ -311,8 +312,6 @@ class _FxCard extends StatelessWidget {
         ]),
       );
     }
-    final c = Catalog.currency(code);
-    final q = state.quotes?.fx[code];
     return SurfaceCard(
       onTap: () => _openCurrency(context),
       child: Row(
@@ -321,25 +320,37 @@ class _FxCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${c.name} ${c.code}', style: TextStyles.symbol.copyWith(fontSize: 15)),
-                const SizedBox(height: 4),
-                Text.rich(TextSpan(children: [
-                  TextSpan(
-                    text: q == null ? '—' : formatFxLine(c, q.rateKrw),
-                    style: TextStyles.sub.copyWith(color: AppColors.textPrimary),
-                  ),
-                  if (q != null)
-                    TextSpan(
-                      text: '  ${formatPct(q.changePct)}',
-                      style: TextStyle(fontSize: 12, color: AppColors.change(q.changePct, state.colorScheme)),
-                    ),
-                ])),
+                for (final (i, code) in codes.indexed) ...[
+                  if (i > 0) const SizedBox(height: 12),
+                  _fxLine(Catalog.currency(code), state.quotes?.fx[code]),
+                ],
               ],
             ),
           ),
           const Text('변경 ›', style: TextStyles.sub),
         ],
       ),
+    );
+  }
+
+  Widget _fxLine(Currency c, FxQuote? q) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${c.name} ${c.code}', style: TextStyles.symbol.copyWith(fontSize: 15)),
+        const SizedBox(height: 4),
+        Text.rich(TextSpan(children: [
+          TextSpan(
+            text: q == null ? '—' : formatFxLine(c, q.rateKrw),
+            style: TextStyles.sub.copyWith(color: AppColors.textPrimary),
+          ),
+          if (q != null)
+            TextSpan(
+              text: '  ${formatPct(q.changePct)}',
+              style: TextStyle(fontSize: 12, color: AppColors.change(q.changePct, state.colorScheme)),
+            ),
+        ])),
+      ],
     );
   }
 }
@@ -468,7 +479,7 @@ class _EmptyState extends StatelessWidget {
               children: [
                 PillButton(label: '+ BTC', outlinedAccent: true, onPressed: () => s.addCoin('BTC')),
                 PillButton(label: '+ TSLA', outlinedAccent: true, onPressed: () => s.addStock('TSLA')),
-                PillButton(label: '+ 달러 USD', outlinedAccent: true, onPressed: () => s.setFx('USD')),
+                PillButton(label: '+ 달러 USD', outlinedAccent: true, onPressed: () => s.addFx('USD')),
               ],
             ),
           ],
