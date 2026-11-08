@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:marketpeek/app/app_scope.dart';
 import 'package:marketpeek/data/catalog.dart';
+import 'package:marketpeek/data/kis_quote_repository.dart';
 import 'package:marketpeek/data/quote_repository.dart';
 import 'package:marketpeek/main.dart';
 import 'package:marketpeek/state/app_state.dart';
@@ -145,6 +148,43 @@ void main() {
     expect(find.text('BTC'), findsOneWidget);
     expect(find.text('100,000,000원'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
+  });
+
+  group('증권사 연결 안내', () {
+    Future<AppState> pumpHome(WidgetTester tester, {required bool connected}) async {
+      final store = MemoryKisCredentialStore();
+      if (connected) store.credentials = const KisCredentials(appKey: 'k', appSecret: 's');
+      // 실제 KIS는 부르지 않는다 (연결 상태 표시만 본다).
+      final kis = KisQuoteRepository(
+        fallback: MockQuoteRepository(),
+        store: store,
+        client: MockClient((_) async => http.Response('{}', 500)),
+      );
+      final s = AppState(repository: kis, widgetSync: _NoopSync(), kis: kis);
+      await tester.runAsync(() async {
+        await s.load();
+        await s.addKrStock('005930');
+      });
+      await tester.pumpWidget(MarketPeekApp(state: s));
+      await tester.pumpAndSettle();
+      return s;
+    }
+
+    testWidgets('미연결이면 주식 위에 안내를 띄우고 누르면 연결 화면으로 간다', (tester) async {
+      final s = await pumpHome(tester, connected: false);
+      expect(find.text('증권사를 연결하면 주식 시세가 보여요'), findsOneWidget);
+      expect(WidgetSync.buildSnapshot(s)['settings']['stocksConnected'], isFalse);
+
+      await tester.tap(find.text('연결하기 ›'));
+      await tester.pumpAndSettle();
+      expect(find.text('App Key'), findsOneWidget);
+    });
+
+    testWidgets('연결돼 있으면 안내가 없다', (tester) async {
+      final s = await pumpHome(tester, connected: true);
+      expect(find.text('증권사를 연결하면 주식 시세가 보여요'), findsNothing);
+      expect(WidgetSync.buildSnapshot(s)['settings']['stocksConnected'], isTrue);
+    });
   });
 
   testWidgets('환율: 여러 통화를 고르고, 다시 누르면 빠지고, 완료로 닫힌다', (tester) async {

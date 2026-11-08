@@ -98,7 +98,15 @@ struct StockWidgetView: View {
 
     var body: some View {
         let stocks = Array((entry.snapshot?.stocks ?? []).dropFirst(entry.offset))
-        if let snap = entry.snapshot, let st = stocks.first {
+        if let snap = entry.snapshot, !snap.settings.isStocksConnected,
+           !stocks.isEmpty, stocks.allSatisfy({ $0.priceUsd == nil }) {
+            // 증권사 미연결이라 가격이 하나도 없으면 "—" 대신 연결 안내.
+            if family == .accessoryInline {
+                Text("미국주식 · 앱에서 증권사 연결")
+            } else {
+                EmptyHint(title: "미국주식", message: "앱에서 증권사를 연결하세요")
+            }
+        } else if let snap = entry.snapshot, let st = stocks.first {
             let s = snap.settings
             let rows = Array(stocks.prefix(s.stockRowCount))
             let title = s.showMarketStatus ? "미국주식 · \(MarketHours.label(at: entry.date))" : "미국주식"
@@ -316,6 +324,8 @@ struct MixItem: Hashable {
     static func resolve(_ id: String, in s: Snapshot) -> MixItem {
         let parts = id.split(separator: ":", maxSplits: 1).map(String.init)
         let kind = parts.first ?? "", key = parts.count > 1 ? parts[1] : ""
+        // 주식 가격이 없을 때: 증권사 미연결이면 연결 안내.
+        let noPrice = s.settings.isStocksConnected ? "—" : "증권사 연결 필요"
         switch kind {
         case "coin":
             if let c = s.coins.first(where: { $0.symbol == key }) {
@@ -323,11 +333,11 @@ struct MixItem: Hashable {
             }
         case "kr":
             if let k = (s.krStocks ?? []).first(where: { $0.code == key }) {
-                return MixItem(symbol: k.name, price: k.priceShort ?? Fmt.dropWon(k.price) ?? "—", change: k.change)
+                return MixItem(symbol: k.name, price: k.priceShort ?? Fmt.dropWon(k.price) ?? noPrice, change: k.change)
             }
         case "stock":
             if let st = s.stocks.first(where: { $0.ticker == key }) {
-                return MixItem(symbol: st.ticker, price: st.priceUsd ?? "—", change: st.change)
+                return MixItem(symbol: st.ticker, price: st.priceUsd ?? noPrice, change: st.change)
             }
         case "fx":
             let fxs = s.fxList ?? (s.fx.map { [$0] } ?? [])

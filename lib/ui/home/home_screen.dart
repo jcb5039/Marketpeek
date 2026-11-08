@@ -10,6 +10,7 @@ import '../../util/market_hours.dart';
 import '../common.dart';
 import '../currency/currency_screen.dart';
 import '../search/search_screen.dart';
+import '../settings/kis_connect_screen.dart';
 
 /// 홈 · 내 목록 (빈 상태 / 일부만 고른 상태 / 전체 / 편집 모드)
 class HomeScreen extends StatefulWidget {
@@ -74,6 +75,8 @@ class _ListBody extends StatelessWidget {
     final showKr = hasKr || editing;
     final showStocks = hasStocks || editing;
     final showFx = hasFx || editing;
+    // 증권사 미연결이면 주식 가격이 비어 있으니 첫 주식 섹션 위에 연결 안내를 한 번 띄운다.
+    final needConnect = !editing && s.kis != null && !s.kisConnected && (hasKr || hasStocks);
 
     return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -92,6 +95,7 @@ class _ListBody extends StatelessWidget {
         ],
         if (showKr) ...[
           if (showCoins) const _Divider(),
+          if (needConnect) const SliverToBoxAdapter(child: _ConnectBanner()),
           SliverToBoxAdapter(
             child: SectionHeader(title: '국내주식', onAdd: () => _openSearch(context, SearchKind.krStock)),
           ),
@@ -105,6 +109,7 @@ class _ListBody extends StatelessWidget {
         ],
         if (showStocks) ...[
           if (showCoins || showKr) const _Divider(),
+          if (needConnect && !showKr) const SliverToBoxAdapter(child: _ConnectBanner()),
           SliverToBoxAdapter(
             child: SectionHeader(
               title: '미국주식 · $marketLabel',
@@ -134,6 +139,28 @@ class _ListBody extends StatelessWidget {
         SliverToBoxAdapter(child: _Footer(state: s)),
         const SliverToBoxAdapter(child: SizedBox(height: 32)),
       ],
+    );
+  }
+}
+
+/// 증권사 미연결 안내. 누르면 연결 화면으로 간다.
+class _ConnectBanner extends StatelessWidget {
+  const _ConnectBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: SurfaceCard(
+        onTap: () => Navigator.of(context)
+            .push(MaterialPageRoute<void>(builder: (_) => const KisConnectScreen())),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: const Row(children: [
+          Expanded(child: Text('증권사를 연결하면 주식 시세가 보여요', style: TextStyles.sub)),
+          Text('연결하기 ›',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.accent)),
+        ]),
+      ),
     );
   }
 }

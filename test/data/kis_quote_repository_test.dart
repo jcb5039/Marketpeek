@@ -81,6 +81,7 @@ void main() {
         client: kis.client,
         clock: () => now,
         requestGap: Duration.zero,
+        rateLimitRetryDelay: Duration.zero,
       );
 
   test('키가 없으면 주식도 fallback에 맡기고 KIS는 부르지 않는다', () async {
@@ -153,6 +154,56 @@ void main() {
     );
     expect(fallback.lastKrStockCodes, ['005930']);
     expect(kis.requests, isEmpty);
+  });
+
+  test('초당 한도(EGW00201)에 걸리면 한 번 더 부른다', () async {
+    final kis = _FakeKis();
+    var calls = 0;
+    final ok = kis.prices['TSLA']!;
+    final limited = {'rt_cd': '1', 'msg_cd': 'EGW00201', 'msg1': '초당 거래건수를 초과하였습니다.'};
+    final store = MemoryKisCredentialStore()
+      ..credentials = creds
+      ..token = KisToken(value: 'saved', expiresAt: now.add(const Duration(hours: 5)));
+    final client = MockClient((req) async {
+      calls++;
+      return _json(calls == 1 ? limited : ok);
+    });
+    final b = await KisQuoteRepository(
+      fallback: _RecordingFallback(),
+      store: store,
+      client: client,
+      clock: () => now,
+      requestGap: Duration.zero,
+      rateLimitRetryDelay: Duration.zero,
+    ).fetch(coinSymbols: const [], stockTickers: const ['TSLA'], currencyCodes: const []);
+    expect(calls, 2);
+    expect(b.stocks['TSLA']!.priceUsd, 358.22);
+  });
+
+  test('갱신이 겹쳐도 KIS 호출은 동시에 나가지 않는다', () async {
+    var inFlight = 0, maxInFlight = 0;
+    final store = MemoryKisCredentialStore()
+      ..credentials = creds
+      ..token = KisToken(value: 'saved', expiresAt: now.add(const Duration(hours: 5)));
+    final client = MockClient((req) async {
+      inFlight++;
+      maxInFlight = inFlight > maxInFlight ? inFlight : maxInFlight;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      inFlight--;
+      return _json(_FakeKis().prices['TSLA']!);
+    });
+    final r = KisQuoteRepository(
+      fallback: _RecordingFallback(),
+      store: store,
+      client: client,
+      clock: () => now,
+      requestGap: Duration.zero,
+    );
+    await Future.wait([
+      for (var i = 0; i < 3; i++)
+        r.fetch(coinSymbols: const [], stockTickers: const ['TSLA', 'SPY'], currencyCodes: const []),
+    ]);
+    expect(maxInFlight, 1);
   });
 
   test('저장된 토큰이 아직 유효하면 다시 발급받지 않는다', () async {

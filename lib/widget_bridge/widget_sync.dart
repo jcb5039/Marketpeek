@@ -16,7 +16,7 @@ import '../util/format.dart';
 class WidgetSync {
   static const appGroupId = 'group.com.yoonhyukju.marketpeek';
   static const snapshotKey = 'snapshot';
-  static const schemaVersion = 6;
+  static const schemaVersion = 7;
 
   /// WidgetKit `kind` 값. Swift 쪽 위젯 정의와 일치해야 한다.
   static const widgetKinds = [
@@ -126,6 +126,8 @@ class WidgetSync {
         // v4: 사각형 위젯 한 칸에 보일 개수. 위젯이 고른 시작 위치부터 이만큼 보여준다.
         'coinRows': s.coinWidgetCount,
         'stockRows': s.stockWidgetCount,
+        // v7: 증권사(한투) 연결 여부. 미연결이면 위젯이 주식 칸에 연결 안내를 띄운다.
+        'stocksConnected': s.kis == null || s.kisConnected,
       },
       'coins': coins,
       'stocks': stocks,

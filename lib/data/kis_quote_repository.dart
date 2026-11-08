@@ -127,7 +127,8 @@ class KisQuoteRepository implements QuoteRepository {
     http.Client? client,
     this.baseUrl = defaultBaseUrl,
     DateTime Function()? clock,
-    this.requestGap = const Duration(milliseconds: 80),
+    this.requestGap = const Duration(milliseconds: 350),
+    this.rateLimitRetryDelay = const Duration(milliseconds: 1100),
   })  : _client = client ?? http.Client(),
         _now = clock ?? DateTime.now;
 
@@ -137,8 +138,16 @@ class KisQuoteRepository implements QuoteRepository {
   final KisCredentialStore store;
   final String baseUrl;
 
-  /// 종목 사이 간격. 초당 호출 한도(EGW00201) 초과를 피한다.
+  /// 호출 사이 간격. 초당 호출 한도(EGW00201) 초과를 피한다.
+  /// 신규 신청 직후 등 한도가 낮을 때도 버티도록 초당 3건 안쪽으로 둔다.
   final Duration requestGap;
+
+  /// 그래도 한도에 걸리면 이만큼 기다렸다 한 번 더 부른다.
+  final Duration rateLimitRetryDelay;
+
+  /// 갱신이 겹쳐도(앱 시작·당겨서 새로고침·종목 추가) KIS 호출은 한 번에 하나씩.
+  /// 처음 호출할 때 만든다 (생성 시점에 만들면 그 시점의 Zone에 묶여 테스트에서 멈춘다).
+  Future<void>? _queue;
   final http.Client _client;
   final DateTime Function() _now;
 
@@ -175,7 +184,7 @@ class KisQuoteRepository implements QuoteRepository {
       );
     }
     final results = await Future.wait([
-      _fetchStocks(creds, stockTickers, krStockCodes),
+      _serial(() => _fetchStocks(creds, stockTickers, krStockCodes)),
       fallback.fetch(
         coinSymbols: coinSymbols,
         stockTickers: const [],
@@ -202,8 +211,11 @@ class KisQuoteRepository implements QuoteRepository {
     final us = <String, StockQuote>{};
     final kr = <String, KrStockQuote>{};
     final KisToken token;
+    var freshToken = false;
     try {
+      final saved = await store.readToken();
       token = await _validToken(creds);
+      freshToken = saved?.value != token.value;
     } catch (e) {
       debugPrint('KIS token failed: $e');
       return (us, kr);
@@ -221,9 +233,16 @@ class KisQuoteRepository implements QuoteRepository {
         }),
     ];
     for (final (i, (id, job)) in jobs.indexed) {
-      if (i > 0 && requestGap > Duration.zero) await Future<void>.delayed(requestGap);
+      if ((i > 0 || freshToken) && requestGap > Duration.zero) {
+        await Future<void>.delayed(requestGap);
+      }
       try {
-        await job();
+        try {
+          await job();
+        } on _RateLimited {
+          await Future<void>.delayed(rateLimitRetryDelay);
+          await job();
+        }
       } on _TokenExpired {
         await store.writeToken(null); // 다음 갱신 때 새로 받는다.
         break;
@@ -232,6 +251,14 @@ class KisQuoteRepository implements QuoteRepository {
       }
     }
     return (us, kr);
+  }
+
+  /// [job]을 앞선 KIS 호출이 끝난 뒤에 실행한다.
+  Future<T> _serial<T>(Future<T> Function() job) {
+    final prev = _queue;
+    final result = prev == null ? job() : prev.then((_) => job());
+    _queue = result.then((_) {}, onError: (_) {});
+    return result;
   }
 
   Future<KisToken> _validToken(KisCredentials creds) async {
@@ -303,6 +330,7 @@ class KisQuoteRepository implements QuoteRepository {
     final body = _decode(res);
     final msgCd = body['msg_cd'] as String?;
     if (msgCd == 'EGW00123' || msgCd == 'EGW00121') throw _TokenExpired();
+    if (msgCd == 'EGW00201') throw _RateLimited();
     if (res.statusCode != 200 || body['rt_cd'] != '0') {
       throw KisApiException('${body['msg_cd'] ?? res.statusCode} ${body['msg1'] ?? ''}');
     }
@@ -328,3 +356,5 @@ class KisQuoteRepository implements QuoteRepository {
 }
 
 class _TokenExpired implements Exception {}
+
+class _RateLimited implements Exception {}

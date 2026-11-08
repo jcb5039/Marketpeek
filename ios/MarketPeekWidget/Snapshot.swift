@@ -13,7 +13,10 @@ struct Snapshot: Codable {
         var showUpdatedAt: Bool
         var coinRows: Int?   // v4: 사각형 한 칸에 보일 코인 수
         var stockRows: Int?  // v4
+        var stocksConnected: Bool?  // v7: 증권사(한투) 연결 여부
 
+        /// v6 이하 스냅샷에는 값이 없으니 연결된 것으로 본다.
+        var isStocksConnected: Bool { stocksConnected ?? true }
         var coinRowCount: Int { min(max(coinRows ?? 2, 1), 3) }
         var stockRowCount: Int { min(max(stockRows ?? 1, 1), 3) }
     }
@@ -96,7 +99,7 @@ struct Snapshot: Codable {
 
     /// 위젯 갤러리 미리보기용 예시 (기획서 6장 예시 값, 실제 시세 아님).
     static let placeholder = Snapshot(
-        schemaVersion: 6,
+        schemaVersion: 7,
         updatedAt: Date(),
         settings: .init(colorScheme: "korean", showStockKrw: true, showMarketStatus: true, showUpdatedAt: true,
                         coinRows: 3, stockRows: 1),
