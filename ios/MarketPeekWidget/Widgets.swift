@@ -301,7 +301,7 @@ struct MixWidget: Widget {
             MixWidgetView(entry: entry).widgetBackground()
         }
         .configurationDisplayName("자유 구성")
-        .description("칸 3개에 코인·미국주식·환율을 골라 담아요. 길게 눌러 \u{201C}위젯 편집\u{201D}에서 바꿀 수 있어요.")
+        .description("칸 3개에 코인·국내주식·미국주식·환율을 골라 담아요. 길게 눌러 \u{201C}위젯 편집\u{201D}에서 바꿀 수 있어요.")
         .supportedFamilies([.systemSmall])
     }
 }
@@ -320,6 +320,10 @@ struct MixItem: Hashable {
         case "coin":
             if let c = s.coins.first(where: { $0.symbol == key }) {
                 return MixItem(symbol: c.symbol, price: c.priceShort ?? Fmt.dropWon(c.price) ?? "—", change: c.change)
+            }
+        case "kr":
+            if let k = (s.krStocks ?? []).first(where: { $0.code == key }) {
+                return MixItem(symbol: k.name, price: k.priceShort ?? Fmt.dropWon(k.price) ?? "—", change: k.change)
             }
         case "stock":
             if let st = s.stocks.first(where: { $0.ticker == key }) {

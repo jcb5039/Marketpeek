@@ -47,6 +47,7 @@ class UpbitQuoteRepository implements QuoteRepository {
     required List<String> coinSymbols,
     required List<String> stockTickers,
     required List<String> currencyCodes,
+    List<String> krStockCodes = const [],
   }) async {
     final results = await Future.wait([
       _fetchCoins(coinSymbols),
@@ -54,6 +55,7 @@ class UpbitQuoteRepository implements QuoteRepository {
         coinSymbols: const [],
         stockTickers: stockTickers,
         currencyCodes: currencyCodes,
+        krStockCodes: krStockCodes,
       ),
     ]);
     final coins = results[0] as Map<String, CoinQuote>;
@@ -61,6 +63,7 @@ class UpbitQuoteRepository implements QuoteRepository {
     return QuoteBundle(
       coins: coins,
       stocks: rest.stocks,
+      krStocks: rest.krStocks,
       fx: rest.fx,
       issue: rest.issue,
       fetchedAt: DateTime.now(),

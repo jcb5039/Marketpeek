@@ -24,6 +24,7 @@ class ServerQuoteRepository implements QuoteRepository {
     required List<String> coinSymbols,
     required List<String> stockTickers,
     required List<String> currencyCodes,
+    List<String> krStockCodes = const [], // 서버는 주식을 다루지 않는다.
   }) async {
     final fxCodes = {...currencyCodes, 'USD'}; // 미국주식 원화 환산용 USD는 항상 받는다.
     final uri = Uri.parse(baseUrl).replace(

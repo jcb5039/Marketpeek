@@ -90,6 +90,23 @@ void main() {
       expect((snap['settings'] as Map)['coinRows'], 3);
     });
 
+    test('국내주식은 목록 순서대로 이름·원화 가격과 함께 담기고 저장된다', () async {
+      final s = await _state();
+      await s.addKrStock('000660');
+      await s.addKrStock('005930');
+      await s.addKrStock('005930'); // 중복은 무시
+
+      final kr = WidgetSync.buildSnapshot(s)['krStocks'] as List;
+      expect(kr.map((k) => k['code']), ['000660', '005930']);
+      expect(kr.last['name'], '삼성전자');
+      expect(kr.last['price'], formatKrw(98500)); // MockQuoteRepository 예시 값
+      expect(s.isEmpty, isFalse);
+
+      await s.removeKrStock('000660');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getStringList('krStocks'), ['005930']);
+    });
+
     test('미국주식 원화는 선택 통화와 무관하게 USD/KRW', () async {
       final s = await _state();
       await s.addStock('TSLA');

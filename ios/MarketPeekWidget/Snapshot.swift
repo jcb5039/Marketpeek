@@ -35,6 +35,15 @@ struct Snapshot: Codable {
         var change: Double?
     }
 
+    /// v6: 국내주식
+    struct KrStock: Codable, Hashable {
+        var code: String
+        var name: String
+        var price: String?
+        var priceShort: String?
+        var change: Double?
+    }
+
     struct Fx: Codable {
         var code: String
         var name: String
@@ -64,6 +73,8 @@ struct Snapshot: Codable {
     var issue: Issue?
     /// v5: 앱에서 고른 통화 전체, 고른 순서 (자유 구성 위젯용). v4 스냅샷에는 없다.
     var fxList: [Fx]? = nil
+    /// v6: 국내주식 (홈 목록 앞 6개). v5 이하 스냅샷에는 없다.
+    var krStocks: [KrStock]? = nil
 
     static func load() -> Snapshot? {
         guard
@@ -85,7 +96,7 @@ struct Snapshot: Codable {
 
     /// 위젯 갤러리 미리보기용 예시 (기획서 6장 예시 값, 실제 시세 아님).
     static let placeholder = Snapshot(
-        schemaVersion: 5,
+        schemaVersion: 6,
         updatedAt: Date(),
         settings: .init(colorScheme: "korean", showStockKrw: true, showMarketStatus: true, showUpdatedAt: true,
                         coinRows: 3, stockRows: 1),
@@ -104,6 +115,10 @@ struct Snapshot: Codable {
             .init(code: "USD", name: "미국 달러", unit: 1, rate: "1,430.50원", change: 0.4),
             .init(code: "JPY", name: "일본 엔", unit: 100, rate: "950원", change: -0.3),
             .init(code: "EUR", name: "유로", unit: 1, rate: "1,560.20원", change: 0.1),
+        ],
+        krStocks: [
+            .init(code: "005930", name: "삼성전자", price: "98,500원", priceShort: "9.9만", change: 1.24),
+            .init(code: "000660", name: "SK하이닉스", price: "412,000원", priceShort: "41.2만", change: -0.72),
         ]
     )
 }

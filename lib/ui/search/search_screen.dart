@@ -4,9 +4,10 @@ import '../../app/app_scope.dart';
 import '../../app/theme.dart';
 import '../../data/catalog.dart';
 
-enum SearchKind { coin, stock }
+/// [stock]은 미국주식, [krStock]은 국내주식.
+enum SearchKind { coin, krStock, stock }
 
-/// 종목 검색 · 코인(이름·심볼) / 미국주식(티커). 두 목록은 완전히 분리된다.
+/// 종목 검색 · 코인(이름·심볼) / 국내주식(이름·코드) / 미국주식(티커·한글명·영문명). 세 목록은 분리된다.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key, required this.kind});
 
@@ -22,6 +23,23 @@ class _SearchScreenState extends State<SearchScreen> {
 
   bool get _isCoin => widget.kind == SearchKind.coin;
 
+  String get _title => switch (widget.kind) {
+        SearchKind.coin => '코인 추가',
+        SearchKind.krStock => '국내주식 추가',
+        SearchKind.stock => '미국주식 추가',
+      };
+
+  String get _hint => switch (widget.kind) {
+        SearchKind.coin => '코인 이름·심볼 검색',
+        SearchKind.krStock => '종목명·코드 검색 (예: 삼성전자)',
+        SearchKind.stock => '티커·이름 검색 (예: TSLA, 테슬라)',
+      };
+
+  String get _footer => switch (widget.kind) {
+        SearchKind.coin => '업비트 원화 시세 기준이에요',
+        _ => '주식 시세는 설정 > 증권사 연결(한국투자증권)을 하면 보여요',
+      };
+
   @override
   void dispose() {
     _controller.dispose();
@@ -32,15 +50,37 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget build(BuildContext context) {
     final s = AppScope.of(context);
 
-    final results = _isCoin
-        ? Catalog.searchCoins(_query).map((c) => (id: c.symbol, name: c.name)).toList()
-        : Catalog.searchStocks(_query).map((t) => (id: t.ticker, name: t.name)).toList();
-    final selected = _isCoin ? s.coinSymbols : s.stockTickers;
+    // title: 굵게 보일 이름, sub: 아래 작은 글씨
+    final results = switch (widget.kind) {
+      SearchKind.coin =>
+        Catalog.searchCoins(_query).map((c) => (id: c.symbol, title: c.symbol, sub: c.name)).toList(),
+      SearchKind.krStock => Catalog.searchKrStocks(_query)
+          .map((k) => (id: k.code, title: k.name, sub: '${k.code} · ${k.market}'))
+          .toList(),
+      SearchKind.stock => Catalog.searchStocks(_query)
+          .map((t) => (id: t.ticker, title: t.ticker, sub: t.name))
+          .toList(),
+    };
+    final selected = switch (widget.kind) {
+      SearchKind.coin => s.coinSymbols,
+      SearchKind.krStock => s.krStockCodes,
+      SearchKind.stock => s.stockTickers,
+    };
+    Future<void> add(String id) => switch (widget.kind) {
+          SearchKind.coin => s.addCoin(id),
+          SearchKind.krStock => s.addKrStock(id),
+          SearchKind.stock => s.addStock(id),
+        };
+    Future<void> remove(String id) => switch (widget.kind) {
+          SearchKind.coin => s.removeCoin(id),
+          SearchKind.krStock => s.removeKrStock(id),
+          SearchKind.stock => s.removeStock(id),
+        };
 
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: Text(_isCoin ? '코인 추가' : '미국주식 추가'),
+        title: Text(_title),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -60,10 +100,10 @@ class _SearchScreenState extends State<SearchScreen> {
             child: TextField(
               controller: _controller,
               autofocus: !_isCoin,
-              textCapitalization: _isCoin ? TextCapitalization.none : TextCapitalization.characters,
+              autocorrect: false,
               onChanged: (v) => setState(() => _query = v),
               decoration: InputDecoration(
-                hintText: _isCoin ? '코인 이름·심볼 검색' : '티커 검색 (예: TSLA)',
+                hintText: _hint,
                 hintStyle: const TextStyle(color: AppColors.textTertiary),
                 prefixIcon: const Icon(Icons.search, color: AppColors.textTertiary, size: 20),
                 filled: true,
@@ -88,20 +128,17 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           for (final r in results) ...[
             _ResultRow(
-              id: r.id,
-              name: r.name,
+              id: r.title,
+              name: r.sub,
               added: selected.contains(r.id),
-              onAdd: () => _isCoin ? s.addCoin(r.id) : s.addStock(r.id),
-              onRemove: () => _isCoin ? s.removeCoin(r.id) : s.removeStock(r.id),
+              onAdd: () => add(r.id),
+              onRemove: () => remove(r.id),
             ),
             const Divider(height: 1, indent: 20, endIndent: 20),
           ],
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-            child: Text(
-              _isCoin ? '업비트 원화 시세 기준이에요' : '코인은 홈의 코인 + 추가에서 이름이나 심볼로 검색해요',
-              style: TextStyles.caption,
-            ),
+            child: Text(_footer, style: TextStyles.caption),
           ),
         ],
       ),

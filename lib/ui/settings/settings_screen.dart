@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../models/models.dart';
 import '../../state/app_state.dart';
 import '../../util/format.dart';
+import 'kis_connect_screen.dart';
 
 /// 설정 · 위젯별 표시 항목, 상승·하락 색상.
 class SettingsScreen extends StatelessWidget {
@@ -47,6 +48,20 @@ class SettingsScreen extends StatelessWidget {
               onChanged: (v) => s.updateSettings(showUpdatedAt: v),
             ),
           ]),
+          if (s.kis != null) ...[
+            const _Header('증권사 연결'),
+            _Group(children: [
+              ListTile(
+                title: const Text('한국투자증권',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                subtitle: Text(s.kisConnected ? '연결됨 · 주식 시세를 받아와요' : '연결 안 됨 · 키를 넣으면 주식 시세를 받아와요',
+                    style: TextStyles.caption),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context)
+                    .push(MaterialPageRoute<void>(builder: (_) => const KisConnectScreen())),
+              ),
+            ]),
+          ],
           const _Header('상승·하락 색'),
           RadioGroup<ChangeColorScheme>(
             groupValue: s.colorScheme,

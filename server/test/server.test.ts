@@ -1,7 +1,6 @@
-// Finnhub·수출입은행 응답 변환과 /quotes 캐시 동작 테스트. 실제 외부 API는 부르지 않는다.
+// 수출입은행 응답 변환과 /quotes 캐시 동작 테스트. 실제 외부 API는 부르지 않는다.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchFx, kstDate } from '../src/eximbank';
-import { fetchStocks } from '../src/finnhub';
 import worker, { refresh, type Env } from '../src/index';
 
 const jsonRes = (body: unknown, status = 200) =>
@@ -25,27 +24,12 @@ function memoryKv() {
 function env(kv = memoryKv()): Env & { QUOTES: ReturnType<typeof memoryKv> } {
   return {
     QUOTES: kv as unknown as KVNamespace & ReturnType<typeof memoryKv>,
-    STOCK_TICKERS: 'TSLA,NVDA',
     FX_CODES: 'USD,JPY',
-    FINNHUB_API_KEY: 'fk',
     EXIM_API_KEY: 'ek',
   } as Env & { QUOTES: ReturnType<typeof memoryKv> };
 }
 
 afterEach(() => vi.unstubAllGlobals());
-
-describe('fetchStocks', () => {
-  it('c·dp를 priceUsd·changePct로 바꾸고 실패·빈 티커는 뺀다', async () => {
-    const fetchFn = vi.fn(async (url: string) => {
-      if (url.includes('symbol=TSLA')) return jsonRes({ c: 450, dp: 3.1, pc: 436.5 });
-      if (url.includes('symbol=FAKE')) return jsonRes({ c: 0, dp: null });
-      return jsonRes({ error: 'limit' }, 429);
-    });
-    const out = await fetchStocks(['TSLA', 'FAKE', 'NVDA'], 'fk', fetchFn as unknown as typeof fetch);
-    expect(out).toEqual({ TSLA: { priceUsd: 450, changePct: 3.1 } });
-    expect(fetchFn.mock.calls[0][0]).toContain('token=fk');
-  });
-});
 
 describe('fetchFx', () => {
   // 2026-11-09(월) 10:00 KST → 오늘은 고시 전(빈 배열), 주말 건너뛰고 11-06(금)과 11-05(목)을 비교.
@@ -86,31 +70,12 @@ describe('fetchFx', () => {
 
 describe('refresh / GET /quotes', () => {
   function stubApis() {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes('finnhub')) {
-        if (url.includes('TSLA')) return jsonRes({ c: 450, dp: 3.1 });
-        return jsonRes({}, 500);
-      }
-      return jsonRes([{ result: 1, cur_unit: 'USD', deal_bas_r: '1,430.5' }]);
-    });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
+      jsonRes([{ result: 1, cur_unit: 'USD', deal_bas_r: '1,430.5' }]),
+    );
     vi.stubGlobal('fetch', fetchMock);
     return fetchMock;
   }
-
-  it('실패한 종목은 이전 캐시 값을 유지한다', async () => {
-    stubApis();
-    const e = env();
-    e.QUOTES.store.set(
-      'stocks',
-      JSON.stringify({ updatedAt: '2026-11-06T00:00:00Z', data: { NVDA: { priceUsd: 180, changePct: 1 } } }),
-    );
-    const { stocks } = await refresh(e, new Date('2026-11-06T06:00:00Z'));
-    expect(stocks?.data).toEqual({
-      NVDA: { priceUsd: 180, changePct: 1 },
-      TSLA: { priceUsd: 450, changePct: 3.1 },
-    });
-  });
 
   it('환율은 1시간이 안 지났으면 다시 받지 않는다', async () => {
     const fetchMock = stubApis();
@@ -123,16 +88,22 @@ describe('refresh / GET /quotes', () => {
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes('koreaexim'))).toBe(false);
   });
 
-  it('/quotes는 요청한 종목·통화만 돌려주고, 캐시가 비었으면 먼저 채운다', async () => {
+  it('/quotes는 요청한 통화만 돌려주고, 캐시가 비었으면 먼저 채운다', async () => {
     stubApis();
     const e = env();
-    const res = await worker.fetch(new Request('https://x/quotes?stocks=TSLA,AAPL&fx=usd'), e);
+    const res = await worker.fetch(new Request('https://x/quotes?stocks=TSLA&fx=usd,jpy'), e);
     const body = (await res.json()) as Record<string, unknown>;
     expect(res.status).toBe(200);
-    expect(body.stocks).toEqual({ TSLA: { priceUsd: 450, changePct: 3.1 } });
     expect(body.fx).toEqual({ USD: { rateKrw: 1430.5, changePct: 0 } });
+    expect(body.stocks).toBeUndefined(); // 주식은 더 이상 서버에서 주지 않는다.
     expect(body.issue).toBeNull();
-    expect(e.QUOTES.store.has('stocks')).toBe(true);
+    expect(e.QUOTES.store.has('fx')).toBe(true);
+  });
+
+  it('cron은 Finnhub 등 주식 API를 부르지 않는다', async () => {
+    const fetchMock = stubApis();
+    await refresh(env(), new Date('2026-11-06T06:00:00Z'));
+    expect(fetchMock.mock.calls.every(([u]) => String(u).includes('koreaexim'))).toBe(true);
   });
 
   it('없는 경로는 404', async () => {

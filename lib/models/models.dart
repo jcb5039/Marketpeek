@@ -1,6 +1,6 @@
 /// 앱 전반에서 쓰는 도메인 모델.
 ///
-/// 코인과 미국주식은 기획서 원칙에 따라 서로 다른 타입·목록으로 관리한다.
+/// 코인·국내주식·미국주식은 서로 다른 타입·목록으로 관리한다.
 library;
 
 class Coin {
@@ -10,9 +10,21 @@ class Coin {
 }
 
 class UsStock {
-  const UsStock({required this.ticker, required this.name});
+  const UsStock({required this.ticker, required this.name, this.engName = '', this.excd = 'NAS'});
   final String ticker; // 예: TSLA
-  final String name; // 예: 테슬라
+  final String name; // 예: 테슬라 (한글명이 없으면 영문)
+  final String engName; // 예: TESLA INC (검색용)
+
+  /// 한국투자증권 해외주식 API의 거래소 코드: NAS(나스닥), NYS(뉴욕), AMS(아멕스·NYSE Arca).
+  final String excd;
+}
+
+/// 국내주식 (코스피·코스닥). [code]는 6자리 종목코드.
+class KrStock {
+  const KrStock({required this.code, required this.name, this.market = 'KOSPI'});
+  final String code; // 예: 005930
+  final String name; // 예: 삼성전자
+  final String market; // KOSPI | KOSDAQ
 }
 
 /// 환율 위젯에서 고를 수 있는 통화. [unit]은 표기 단위(JPY는 100).
@@ -36,6 +48,12 @@ class CoinQuote {
 class StockQuote {
   const StockQuote({required this.priceUsd, required this.changePct});
   final double priceUsd;
+  final double changePct;
+}
+
+class KrStockQuote {
+  const KrStockQuote({required this.priceKrw, required this.changePct});
+  final double priceKrw;
   final double changePct;
 }
 

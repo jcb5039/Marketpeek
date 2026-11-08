@@ -1,12 +1,10 @@
-// MarketPeek 시세 서버 진입점: 예약 실행(cron)으로 캐시를 채우고 GET /quotes로 캐시를 내려준다.
+// MarketPeek 시세 서버 진입점: 예약 실행(cron)으로 환율 캐시를 채우고 GET /quotes로 내려준다.
+// 주식 시세는 앱이 한국투자증권 Open API에서 사용자 키로 직접 받는다 (Finnhub는 재배포 금지라 제거).
 import { fetchFx, type FxQuote } from './eximbank';
-import { fetchStocks, type StockQuote } from './finnhub';
 
 export interface Env {
   QUOTES: KVNamespace;
-  STOCK_TICKERS: string;
   FX_CODES: string;
-  FINNHUB_API_KEY: string;
   EXIM_API_KEY: string;
 }
 
@@ -25,19 +23,14 @@ export default {
     if (url.pathname === '/health') return json({ ok: true });
     if (url.pathname !== '/quotes') return json({ error: 'not found' }, 404);
 
-    let [stocks, fx] = await Promise.all([
-      env.QUOTES.get<Cached<StockQuote>>('stocks', 'json'),
-      env.QUOTES.get<Cached<FxQuote>>('fx', 'json'),
-    ]);
+    let fx = await env.QUOTES.get<Cached<FxQuote>>('fx', 'json');
     // 배포 직후 cron이 아직 안 돌았으면 한 번 직접 채운다.
-    if (!stocks || !fx) ({ stocks, fx } = await refresh(env, new Date()));
+    if (!fx) ({ fx } = await refresh(env, new Date()));
 
     return json({
-      stocks: pick(stocks?.data, list(url.searchParams.get('stocks'))),
       fx: pick(fx?.data, list(url.searchParams.get('fx'))),
       // AI 어제 이슈는 아직 없음. 생기면 { text, shortText, generatedAt }.
       issue: null,
-      stocksUpdatedAt: stocks?.updatedAt ?? null,
       fxUpdatedAt: fx?.updatedAt ?? null,
     });
   },
@@ -47,23 +40,10 @@ export default {
   },
 };
 
-/// 주식은 매번, 환율은 1시간이 지났을 때만 새로 받아 KV에 쓴다.
-/// 일부 종목이 실패해도 이전 캐시 값은 남긴다(새 값으로 덮어쓰기만 함).
-export async function refresh(
-  env: Env,
-  now: Date,
-): Promise<{ stocks: Cached<StockQuote> | null; fx: Cached<FxQuote> | null }> {
-  const [oldStocks, oldFx] = await Promise.all([
-    env.QUOTES.get<Cached<StockQuote>>('stocks', 'json'),
-    env.QUOTES.get<Cached<FxQuote>>('fx', 'json'),
-  ]);
-
-  let stocks = oldStocks;
-  const fresh = await fetchStocks(list(env.STOCK_TICKERS), env.FINNHUB_API_KEY);
-  if (Object.keys(fresh).length > 0) {
-    stocks = { updatedAt: now.toISOString(), data: { ...oldStocks?.data, ...fresh } };
-    await env.QUOTES.put('stocks', JSON.stringify(stocks));
-  }
+/// 환율은 1시간이 지났을 때만 새로 받아 KV에 쓴다.
+/// 일부 통화가 실패해도 이전 캐시 값은 남긴다(새 값으로 덮어쓰기만 함).
+export async function refresh(env: Env, now: Date): Promise<{ fx: Cached<FxQuote> | null }> {
+  const oldFx = await env.QUOTES.get<Cached<FxQuote>>('fx', 'json');
 
   let fx = oldFx;
   const fxAge = oldFx ? now.getTime() - Date.parse(oldFx.updatedAt) : Infinity;
@@ -79,7 +59,7 @@ export async function refresh(
     }
   }
 
-  return { stocks, fx };
+  return { fx };
 }
 
 function list(csv: string | null | undefined): string[] {

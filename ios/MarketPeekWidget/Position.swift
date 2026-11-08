@@ -86,7 +86,7 @@ struct QuoteEntity: AppEntity {
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "항목"
     static let defaultQuery = QuoteEntityQuery()
 
-    /// "coin:BTC", "stock:NVDA", "fx:USD"
+    /// "coin:BTC", "kr:005930", "stock:NVDA", "fx:USD"
     let id: String
     let title: String
     let kindLabel: String
@@ -112,6 +112,7 @@ struct QuoteEntityQuery: EntityQuery {
         guard let s = Snapshot.load() else { return [] }
         let fxs = s.fxList ?? (s.fx.map { [$0] } ?? [])
         return s.coins.map { QuoteEntity(id: "coin:\($0.symbol)", title: "\($0.symbol) · \($0.name)", kindLabel: "코인") }
+            + (s.krStocks ?? []).map { QuoteEntity(id: "kr:\($0.code)", title: "\($0.name) · \($0.code)", kindLabel: "국내주식") }
             + s.stocks.map { QuoteEntity(id: "stock:\($0.ticker)", title: "\($0.ticker) · \($0.name)", kindLabel: "미국주식") }
             + fxs.map { QuoteEntity(id: "fx:\($0.code)", title: "\($0.code) · \($0.name)", kindLabel: "환율") }
     }
@@ -119,7 +120,7 @@ struct QuoteEntityQuery: EntityQuery {
 
 struct MixWidgetIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "자유 구성"
-    static let description = IntentDescription("칸마다 코인·미국주식·환율 중 보여줄 항목을 골라요. 하나도 안 고르면 첫 코인·첫 종목·환율이 보여요.")
+    static let description = IntentDescription("칸마다 코인·국내주식·미국주식·환율 중 보여줄 항목을 골라요. 하나도 안 고르면 첫 코인·첫 종목·환율이 보여요.")
 
     @Parameter(title: "첫 번째 칸")
     var slot1: QuoteEntity?

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/catalog.dart';
+import '../data/kis_quote_repository.dart';
 import '../data/quote_repository.dart';
 import '../models/models.dart';
 import '../widget_bridge/widget_sync.dart';
@@ -17,6 +18,7 @@ class AppState extends ChangeNotifier {
     required QuoteRepository repository,
     WidgetSync? widgetSync,
     this.coinListLoader,
+    this.kis,
   })  : _repo = repository,
         _widgetSync = widgetSync ?? WidgetSync();
 
@@ -25,11 +27,18 @@ class AppState extends ChangeNotifier {
   /// 검색용 전체 코인 목록을 받아오는 함수 (업비트 원화 마켓). 없으면 기본 목록만 쓴다.
   final Future<List<Coin>> Function()? coinListLoader;
   final WidgetSync _widgetSync;
+
+  /// 한국투자증권 연결 (주식 시세). 없으면 설정에 연결 항목이 안 보인다.
+  final KisQuoteRepository? kis;
+
+  /// 설정에서 증권사 키를 넣었는지.
+  bool kisConnected = false;
   SharedPreferences? _prefs;
 
-  // 관심 목록 — 코인과 미국주식은 완전히 분리된 목록이다.
+  // 관심 목록 — 코인·국내주식·미국주식은 완전히 분리된 목록이다.
   List<String> coinSymbols = [];
-  List<String> stockTickers = [];
+  List<String> stockTickers = []; // 미국주식 티커
+  List<String> krStockCodes = []; // 국내주식 6자리 코드
 
   /// 고른 환율 통화 (고른 순서). 위젯 편집(자유 구성)에서는 이 통화들만 고를 수 있다.
   List<String> fxCodes = [];
@@ -57,7 +66,7 @@ class AppState extends ChangeNotifier {
   static const maxWidgetItems = 6;
 
   bool get isEmpty =>
-      coinSymbols.isEmpty && stockTickers.isEmpty && fxCode == null;
+      coinSymbols.isEmpty && stockTickers.isEmpty && krStockCodes.isEmpty && fxCode == null;
 
   double? get usdKrw => quotes?.fx['USD']?.rateKrw;
 
@@ -65,6 +74,7 @@ class AppState extends ChangeNotifier {
     final p = _prefs = await SharedPreferences.getInstance();
     coinSymbols = p.getStringList('coins') ?? [];
     stockTickers = p.getStringList('stocks') ?? [];
+    krStockCodes = p.getStringList('krStocks') ?? [];
     // 예전 버전은 통화 하나만 'fx'에 저장했다.
     final legacyFx = p.getString('fx');
     fxCodes = p.getStringList('fxList') ?? [?legacyFx];
@@ -76,6 +86,7 @@ class AppState extends ChangeNotifier {
     colorScheme = ChangeColorScheme.values.byName(
         p.getString('colorScheme') ?? ChangeColorScheme.korean.name);
     _loadCachedCoinList(p);
+    kisConnected = await kis?.isConnected ?? false;
     notifyListeners();
     // 목록을 먼저 받아야 업비트 시세 요청에서 상장폐지 코인을 걸러낼 수 있다.
     await _refreshCoinList(p);
@@ -118,6 +129,7 @@ class AppState extends ChangeNotifier {
       quotes = await _repo.fetch(
         coinSymbols: coinSymbols,
         stockTickers: stockTickers,
+        krStockCodes: krStockCodes,
         // 환율 선택 화면에서 비교할 수 있게 지원 통화는 모두 받아둔다.
         currencyCodes: [for (final c in Catalog.currencies) c.code],
       );
@@ -142,6 +154,23 @@ class AppState extends ChangeNotifier {
 
   Future<void> reorderCoins(int oldIndex, int newIndex) async {
     coinSymbols = _reorder(coinSymbols, oldIndex, newIndex);
+    await _saveAndRefresh(fetch: false);
+  }
+
+  // ── 국내주식 목록 ───────────────────────────────────────
+  Future<void> addKrStock(String code) async {
+    if (krStockCodes.contains(code)) return;
+    krStockCodes = [...krStockCodes, code];
+    await _saveAndRefresh();
+  }
+
+  Future<void> removeKrStock(String code) async {
+    krStockCodes = krStockCodes.where((c) => c != code).toList();
+    await _saveAndRefresh(fetch: false);
+  }
+
+  Future<void> reorderKrStocks(int oldIndex, int newIndex) async {
+    krStockCodes = _reorder(krStockCodes, oldIndex, newIndex);
     await _saveAndRefresh(fetch: false);
   }
 
@@ -183,6 +212,24 @@ class AppState extends ChangeNotifier {
     await _saveAndRefresh(fetch: false);
   }
 
+  // ── 증권사 연결 ─────────────────────────────────────────
+  /// 토큰 발급에 성공해야 저장된다. 실패하면 [KisApiException]을 그대로 던진다.
+  Future<void> connectKis(KisCredentials credentials) async {
+    final k = kis;
+    if (k == null) return;
+    await k.connect(credentials);
+    kisConnected = true;
+    notifyListeners();
+    await refresh();
+  }
+
+  Future<void> disconnectKis() async {
+    await kis?.disconnect();
+    kisConnected = false;
+    notifyListeners();
+    await refresh();
+  }
+
   // ── 표시 설정 ──────────────────────────────────────────
   Future<void> updateSettings({
     int? coinWidgetCount,
@@ -208,6 +255,7 @@ class AppState extends ChangeNotifier {
     if (p != null) {
       await p.setStringList('coins', coinSymbols);
       await p.setStringList('stocks', stockTickers);
+      await p.setStringList('krStocks', krStockCodes);
       await p.setStringList('fxList', fxCodes);
       await p.remove('fx');
       await p.setInt('coinWidgetCount', coinWidgetCount);

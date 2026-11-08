@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'app/app_scope.dart';
 import 'app/theme.dart';
+import 'data/catalog.dart';
+import 'data/kis_quote_repository.dart';
 import 'data/quote_repository.dart';
 import 'data/server_quote_repository.dart';
 import 'data/upbit_quote_repository.dart';
@@ -16,14 +19,18 @@ const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('ko_KR');
-  // 코인은 업비트 실시세, 미국주식·환율·이슈는 서버(없으면 예시 값).
+  await Catalog.loadStockAssets(rootBundle); // 국내·미국 전체 종목 (검색용)
+  // 코인은 업비트, 주식은 한국투자증권(설정에서 내 키를 넣었을 때), 환율·이슈는 서버.
+  // 서버 주소가 없으면 환율·이슈와 (키 없을 때의) 주식은 예시 값.
   final QuoteRepository others = apiBaseUrl.isEmpty
       ? MockQuoteRepository()
       : ServerQuoteRepository(baseUrl: apiBaseUrl);
-  final upbit = UpbitQuoteRepository(fallback: others);
+  final kis = KisQuoteRepository(fallback: others, store: SecureKisCredentialStore());
+  final upbit = UpbitQuoteRepository(fallback: kis);
   final state = AppState(
     repository: upbit,
     coinListLoader: upbit.fetchCoinList,
+    kis: kis,
   );
   runApp(MarketPeekApp(state: state));
   await state.load();

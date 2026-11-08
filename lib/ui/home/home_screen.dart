@@ -66,10 +66,12 @@ class _ListBody extends StatelessWidget {
     final s = state;
     final marketLabel = usMarketStatusLabel(usMarketStatus(DateTime.now()));
     final hasCoins = s.coinSymbols.isNotEmpty;
+    final hasKr = s.krStockCodes.isNotEmpty;
     final hasStocks = s.stockTickers.isNotEmpty;
     final hasFx = s.fxCode != null;
     // 편집 중에는 빈 섹션도 보여줘서 바로 추가할 수 있게 한다.
     final showCoins = hasCoins || editing;
+    final showKr = hasKr || editing;
     final showStocks = hasStocks || editing;
     final showFx = hasFx || editing;
 
@@ -88,8 +90,21 @@ class _ListBody extends StatelessWidget {
             itemBuilder: (id, i) => _CoinRow(symbol: id, inWidget: i < AppState.maxWidgetItems),
           ),
         ],
-        if (showStocks) ...[
+        if (showKr) ...[
           if (showCoins) const _Divider(),
+          SliverToBoxAdapter(
+            child: SectionHeader(title: '국내주식', onAdd: () => _openSearch(context, SearchKind.krStock)),
+          ),
+          _AssetList(
+            ids: s.krStockCodes,
+            editing: editing,
+            onReorder: s.reorderKrStocks,
+            onRemove: s.removeKrStock,
+            itemBuilder: (id, i) => _KrStockRow(code: id, inWidget: i < AppState.maxWidgetItems),
+          ),
+        ],
+        if (showStocks) ...[
+          if (showCoins || showKr) const _Divider(),
           SliverToBoxAdapter(
             child: SectionHeader(
               title: '미국주식 · $marketLabel',
@@ -105,7 +120,7 @@ class _ListBody extends StatelessWidget {
           ),
         ],
         if (showFx) ...[
-          if (showCoins || showStocks) const _Divider(),
+          if (showCoins || showKr || showStocks) const _Divider(),
           const SliverToBoxAdapter(child: SectionHeader(title: '환율 · 위젯에 표시할 통화')),
           SliverToBoxAdapter(
             child: Padding(
@@ -114,7 +129,7 @@ class _ListBody extends StatelessWidget {
             ),
           ),
         ],
-        if (!editing && !(hasCoins && hasStocks && hasFx))
+        if (!editing && !(hasCoins && hasKr && hasStocks && hasFx))
           SliverToBoxAdapter(child: _MoreSuggestions(state: s)),
         SliverToBoxAdapter(child: _Footer(state: s)),
         const SliverToBoxAdapter(child: SizedBox(height: 32)),
@@ -264,6 +279,32 @@ class _CoinRow extends StatelessWidget {
   }
 }
 
+class _KrStockRow extends StatelessWidget {
+  const _KrStockRow({required this.code, required this.inWidget});
+
+  final String code;
+  final bool inWidget;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppScope.of(context);
+    final q = s.quotes?.krStocks[code];
+    return _Row(
+      title: Catalog.krStock(code).name,
+      subtitle: code,
+      inWidget: inWidget,
+      trailing: [
+        Text(q == null ? '—' : formatKrw(q.priceKrw), style: TextStyles.price),
+        const SizedBox(height: 2),
+        Text(
+          q == null ? '' : formatPct(q.changePct),
+          style: TextStyle(fontSize: 12, color: AppColors.change(q?.changePct, s.colorScheme)),
+        ),
+      ],
+    );
+  }
+}
+
 class _StockRow extends StatelessWidget {
   const _StockRow({required this.ticker, required this.inWidget});
 
@@ -365,11 +406,13 @@ class _MoreSuggestions extends StatelessWidget {
   Widget build(BuildContext context) {
     final buttons = <Widget>[
       if (state.coinSymbols.isEmpty)
-        _OutlineBox(label: '+ 코인 추가', onTap: () => _openSearch(context, SearchKind.coin)),
+        _OutlineBox(label: '+ 코인', onTap: () => _openSearch(context, SearchKind.coin)),
+      if (state.krStockCodes.isEmpty)
+        _OutlineBox(label: '+ 국내주식', onTap: () => _openSearch(context, SearchKind.krStock)),
       if (state.stockTickers.isEmpty)
-        _OutlineBox(label: '+ 미국주식 추가', onTap: () => _openSearch(context, SearchKind.stock)),
+        _OutlineBox(label: '+ 미국주식', onTap: () => _openSearch(context, SearchKind.stock)),
       if (state.fxCode == null)
-        _OutlineBox(label: '+ 환율 추가', onTap: () => _openCurrency(context)),
+        _OutlineBox(label: '+ 환율', onTap: () => _openCurrency(context)),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
@@ -454,7 +497,7 @@ class _EmptyState extends StatelessWidget {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 10),
             const Text(
-              '코인, 미국주식, 환율 중\n보고 싶은 것만 골라 추가하세요',
+              '코인, 국내주식, 미국주식, 환율 중\n보고 싶은 것만 골라 추가하세요',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: AppColors.textSecondary, height: 1.5),
             ),
@@ -465,6 +508,7 @@ class _EmptyState extends StatelessWidget {
               alignment: WrapAlignment.center,
               children: [
                 PillButton(label: '코인 추가', onPressed: () => _openSearch(context, SearchKind.coin)),
+                PillButton(label: '국내주식 추가', onPressed: () => _openSearch(context, SearchKind.krStock)),
                 PillButton(label: '미국주식 추가', onPressed: () => _openSearch(context, SearchKind.stock)),
                 PillButton(label: '환율 선택', onPressed: () => _openCurrency(context)),
               ],
@@ -478,6 +522,7 @@ class _EmptyState extends StatelessWidget {
               alignment: WrapAlignment.center,
               children: [
                 PillButton(label: '+ BTC', outlinedAccent: true, onPressed: () => s.addCoin('BTC')),
+                PillButton(label: '+ 삼성전자', outlinedAccent: true, onPressed: () => s.addKrStock('005930')),
                 PillButton(label: '+ TSLA', outlinedAccent: true, onPressed: () => s.addStock('TSLA')),
                 PillButton(label: '+ 달러 USD', outlinedAccent: true, onPressed: () => s.addFx('USD')),
               ],
