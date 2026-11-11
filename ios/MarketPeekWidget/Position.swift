@@ -34,7 +34,7 @@ struct PositionProvider: AppIntentTimelineProvider {
     }
 
     func timeline(for configuration: ListPositionIntent, in context: Context) async -> Timeline<SnapshotEntry> {
-        SnapshotEntry.timeline(offset: configuration.start.rawValue - 1)
+        await SnapshotEntry.timeline(parts: { _ in [.stocks] }, offset: configuration.start.rawValue - 1)
     }
 }
 
@@ -74,8 +74,8 @@ struct CoinProvider: AppIntentTimelineProvider {
     }
 
     func timeline(for configuration: CoinWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
-        SnapshotEntry.timeline(offset: configuration.start.rawValue - 1,
-                               changeOnly: configuration.style == .changeOnly)
+        await SnapshotEntry.timeline(parts: { _ in [.coins] }, offset: configuration.start.rawValue - 1,
+                                     changeOnly: configuration.style == .changeOnly)
     }
 }
 
@@ -146,6 +146,10 @@ struct MixProvider: AppIntentTimelineProvider {
     }
 
     func timeline(for configuration: MixWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
-        SnapshotEntry.timeline(selected: configuration.selected)
+        let picked = configuration.selected.compactMap { $0 }
+        return await SnapshotEntry.timeline(parts: { snap in
+            // 칸에 실제로 보이는 항목의 묶음만 받는다 (안 고르면 기본 항목).
+            Set((picked.isEmpty ? MixItem.defaults(in: snap) : picked).compactMap(QuotePart.of(itemId:)))
+        }, selected: configuration.selected)
     }
 }

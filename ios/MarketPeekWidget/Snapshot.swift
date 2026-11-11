@@ -14,6 +14,7 @@ struct Snapshot: Codable {
         var coinRows: Int?   // v4: 사각형 한 칸에 보일 코인 수
         var stockRows: Int?  // v4
         var stocksConnected: Bool?  // v7: 증권사(한투) 연결 여부
+        var apiBaseUrl: String?  // v8: 위젯이 환율·AI 이슈를 직접 받을 서버 주소. 없으면 받지 않는다.
 
         /// v6 이하 스냅샷에는 값이 없으니 연결된 것으로 본다.
         var isStocksConnected: Bool { stocksConnected ?? true }
@@ -36,6 +37,7 @@ struct Snapshot: Codable {
         var priceKrw: String?
         var priceKrwShort: String?  // v2
         var change: Double?
+        var excd: String?  // v8: KIS 해외주식 거래소 코드 (NAS·NYS·AMS)
     }
 
     /// v6: 국내주식
@@ -78,6 +80,8 @@ struct Snapshot: Codable {
     var fxList: [Fx]? = nil
     /// v6: 국내주식 (홈 목록 앞 6개). v5 이하 스냅샷에는 없다.
     var krStocks: [KrStock]? = nil
+    /// v8: USD/KRW 원값. 위젯이 미국주식만 새로 받았을 때 원화 환산에 쓴다.
+    var usdKrw: Double? = nil
 
     static func load() -> Snapshot? {
         guard
@@ -87,19 +91,27 @@ struct Snapshot: Codable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { d in
             let s = try d.singleValueContainer().decode(String.self)
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = f.date(from: s) { return date }
-            f.formatOptions = [.withInternetDateTime]
-            if let date = f.date(from: s) { return date }
+            if let date = parseDate(s) { return date }
             throw DecodingError.dataCorrupted(.init(codingPath: d.codingPath, debugDescription: s))
         }
         return try? decoder.decode(Snapshot.self, from: data)
     }
 
+    /// Dart `toIso8601String()` 형식("2026-11-11T03:04:05.123456Z")과 서버 ISO 문자열을 읽는다.
+    /// 소수 초가 7자리 이상 등으로 안 읽히면 소수 초를 떼고 다시 읽는다.
+    static func parseDate(_ s: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = f.date(from: s) { return date }
+        f.formatOptions = [.withInternetDateTime]
+        if let date = f.date(from: s) { return date }
+        let trimmed = s.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
+        return trimmed == s ? nil : f.date(from: trimmed)
+    }
+
     /// 위젯 갤러리 미리보기용 예시 (기획서 6장 예시 값, 실제 시세 아님).
     static let placeholder = Snapshot(
-        schemaVersion: 7,
+        schemaVersion: 8,
         updatedAt: Date(),
         settings: .init(colorScheme: "korean", showStockKrw: true, showMarketStatus: true, showUpdatedAt: true,
                         coinRows: 3, stockRows: 1),

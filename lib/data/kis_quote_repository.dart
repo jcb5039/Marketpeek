@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
+import '../widget_bridge/widget_sync.dart';
 import 'catalog.dart';
 import 'quote_repository.dart';
 
@@ -36,18 +37,66 @@ abstract class KisCredentialStore {
 }
 
 class SecureKisCredentialStore implements KisCredentialStore {
-  SecureKisCredentialStore([FlutterSecureStorage? storage])
-      : _s = storage ?? const FlutterSecureStorage();
+  SecureKisCredentialStore([FlutterSecureStorage? storage, FlutterSecureStorage? legacy])
+      : _shared = storage ?? const FlutterSecureStorage(iOptions: sharedOptions),
+        _legacy = legacy ?? const FlutterSecureStorage();
 
-  final FlutterSecureStorage _s;
+  /// 위젯 확장(ios/MarketPeekWidget/LiveQuotes.swift)도 같은 키·토큰을 읽도록 App Group을
+  /// Keychain 접근 그룹으로 쓴다. 잠금 상태에서 위젯을 다시 불러올 때도 읽히게 "처음 잠금 해제 후"로 둔다.
+  static const sharedOptions = IOSOptions(
+    groupId: WidgetSync.appGroupId,
+    accessibility: KeychainAccessibility.first_unlock,
+  );
+
+  final FlutterSecureStorage _shared;
+
+  /// 공유 그룹을 쓰기 전(앱 전용 그룹)에 저장된 항목. 처음 읽을 때 공유 그룹으로 옮긴다.
+  final FlutterSecureStorage _legacy;
+  Future<void>? _migration;
+
+  /// 공유 그룹에 못 쓰는 환경(서명·entitlement 문제)이면 예전처럼 앱 전용 그룹을 쓴다.
+  /// 이 경우 위젯은 주식을 직접 받지 못하고 앱이 써둔 값을 보여준다.
+  bool _sharedUsable = true;
+  FlutterSecureStorage get _s => _sharedUsable ? _shared : _legacy;
 
   static const _appKey = 'kis.appKey';
   static const _appSecret = 'kis.appSecret';
   static const _token = 'kis.token';
   static const _tokenExpiresAt = 'kis.tokenExpiresAt';
+  static const _keys = [_appKey, _appSecret, _token, _tokenExpiresAt];
+  static const _probe = 'kis.sharedProbe';
+
+  Future<void> _ready() => _migration ??= _migrate();
+
+  /// 앱 전용 그룹의 키를 공유 그룹으로 옮긴다.
+  /// 접근 그룹 없이 지우면 모든 그룹의 같은 항목이 지워지므로, 읽기 → 지우기 → 공유 그룹에 쓰기 순서로 한다.
+  Future<void> _migrate() async {
+    try {
+      await _shared.write(key: _probe, value: '1');
+      await _shared.delete(key: _probe);
+    } catch (e) {
+      debugPrint('KIS shared keychain unavailable, using app-only keychain: $e');
+      _sharedUsable = false;
+      return;
+    }
+    try {
+      if (await _shared.read(key: _appKey) != null) return;
+      final old = {for (final k in _keys) k: await _legacy.read(key: k)};
+      if (old[_appKey] == null) return;
+      for (final k in _keys) {
+        await _legacy.delete(key: k);
+      }
+      for (final e in old.entries) {
+        if (e.value != null) await _shared.write(key: e.key, value: e.value);
+      }
+    } catch (e) {
+      debugPrint('KIS keychain migration failed: $e');
+    }
+  }
 
   @override
   Future<KisCredentials?> readCredentials() async {
+    await _ready();
     final key = await _s.read(key: _appKey);
     final secret = await _s.read(key: _appSecret);
     if (key == null || secret == null) return null;
@@ -56,12 +105,14 @@ class SecureKisCredentialStore implements KisCredentialStore {
 
   @override
   Future<void> writeCredentials(KisCredentials c) async {
+    await _ready();
     await _s.write(key: _appKey, value: c.appKey);
     await _s.write(key: _appSecret, value: c.appSecret);
   }
 
   @override
   Future<KisToken?> readToken() async {
+    await _ready();
     final value = await _s.read(key: _token);
     final exp = DateTime.tryParse(await _s.read(key: _tokenExpiresAt) ?? '');
     if (value == null || exp == null) return null;
@@ -70,6 +121,7 @@ class SecureKisCredentialStore implements KisCredentialStore {
 
   @override
   Future<void> writeToken(KisToken? t) async {
+    await _ready();
     if (t == null) {
       await _s.delete(key: _token);
       await _s.delete(key: _tokenExpiresAt);
@@ -81,7 +133,8 @@ class SecureKisCredentialStore implements KisCredentialStore {
 
   @override
   Future<void> clear() async {
-    for (final k in [_appKey, _appSecret, _token, _tokenExpiresAt]) {
+    await _ready();
+    for (final k in _keys) {
       await _s.delete(key: k);
     }
   }

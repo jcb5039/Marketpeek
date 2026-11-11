@@ -173,7 +173,7 @@ struct FxWidget: Widget {
     let kind = "FxWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: SnapshotProvider()) { entry in
+        StaticConfiguration(kind: kind, provider: SnapshotProvider(part: .fx)) { entry in
             FxWidgetView(entry: entry).widgetBackground()
         }
         .configurationDisplayName("환율")
@@ -232,7 +232,7 @@ struct IssueWidget: Widget {
     let kind = "IssueWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: SnapshotProvider()) { entry in
+        StaticConfiguration(kind: kind, provider: SnapshotProvider(part: .issue)) { entry in
             IssueWidgetView(entry: entry).widgetBackground()
         }
         .configurationDisplayName("AI 어제 이슈")

@@ -16,7 +16,10 @@ import '../util/format.dart';
 class WidgetSync {
   static const appGroupId = 'group.com.yoonhyukju.marketpeek';
   static const snapshotKey = 'snapshot';
-  static const schemaVersion = 7;
+  static const schemaVersion = 8;
+
+  /// 위젯이 환율·AI 이슈를 직접 받을 서버 주소 (main.dart의 apiBaseUrl과 같은 값). 없으면 빈 문자열.
+  static const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
   /// WidgetKit `kind` 값. Swift 쪽 위젯 정의와 일치해야 한다.
   static const widgetKinds = [
@@ -87,6 +90,8 @@ class WidgetSync {
           return {
             'ticker': t,
             'name': Catalog.stock(t).name,
+            // v8: 위젯이 KIS 해외주식 시세를 직접 부를 때 쓰는 거래소 코드 (NAS·NYS·AMS)
+            'excd': Catalog.stock(t).excd,
             'priceUsd': sq == null ? null : formatUsd(sq.priceUsd),
             'priceKrw': (sq == null || usdKrw == null)
                 ? null
@@ -118,6 +123,8 @@ class WidgetSync {
     return {
       'schemaVersion': schemaVersion,
       'updatedAt': q?.fetchedAt.toUtc().toIso8601String(),
+      // v8: 위젯이 미국주식만 새로 받았을 때 원화 환산에 쓰는 USD/KRW 원값
+      'usdKrw': usdKrw,
       'settings': {
         'colorScheme': s.colorScheme.name,
         'showStockKrw': s.showStockKrw,
@@ -128,6 +135,8 @@ class WidgetSync {
         'stockRows': s.stockWidgetCount,
         // v7: 증권사(한투) 연결 여부. 미연결이면 위젯이 주식 칸에 연결 안내를 띄운다.
         'stocksConnected': s.kis == null || s.kisConnected,
+        // v8: 위젯이 직접 받아올 서버 주소. 없으면 위젯은 환율·이슈를 앱이 써둔 값 그대로 쓴다.
+        'apiBaseUrl': apiBaseUrl.isEmpty ? null : apiBaseUrl,
       },
       'coins': coins,
       'stocks': stocks,
