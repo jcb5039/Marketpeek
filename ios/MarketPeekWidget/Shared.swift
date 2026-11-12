@@ -15,15 +15,26 @@ struct SnapshotEntry: TimelineEntry {
 }
 
 extension SnapshotEntry {
-    /// 미국장 상태는 시각에 따라 바뀌므로 엔트리마다 다시 계산되게 15분 간격 엔트리를 만든다.
-    static func timeline(offset: Int = 0, changeOnly: Bool = false, selected: [String?] = []) -> Timeline<SnapshotEntry> {
-        let snap = Snapshot.load()
+    /// 앱이 써둔 스냅샷(종목 목록·설정)을 읽고, [parts] 시세를 직접 받아 덮어쓴 뒤 엔트리를 만든다.
+    /// 미국장 상태는 시각에 따라 바뀌므로 15분 간격 엔트리를 1시간치 만들고,
+    /// 15분 뒤 다시 불러 달라고 요청한다. 실제로 언제 다시 부를지는 iOS가 정한다(보장 아님).
+    static func timeline(parts: (Snapshot) -> Set<QuotePart>, offset: Int = 0, changeOnly: Bool = false,
+                         selected: [String?] = [],
+                         logos: (Snapshot) -> [String] = { _ in [] }) async -> Timeline<SnapshotEntry> {
+        var snap = Snapshot.load()
+        if let s = snap {
+            // 주식 로고(자유 구성)는 시세와 동시에 받는다. 둘 다 끝난 뒤 엔트리를 만든다.
+            let logoIds = logos(s)
+            async let logoDone: Void = StockLogos.prefetch(itemIds: logoIds)
+            snap = await LiveQuotes.refresh(s, parts: parts(s))
+            await logoDone
+        }
         let now = Date()
         let entries = (0..<4).map { i in
             SnapshotEntry(date: now.addingTimeInterval(Double(i) * 15 * 60), snapshot: snap,
                           offset: offset, changeOnly: changeOnly, selected: selected)
         }
-        return Timeline(entries: entries, policy: .after(now.addingTimeInterval(60 * 60)))
+        return Timeline(entries: entries, policy: .after(now.addingTimeInterval(15 * 60)))
     }
 
     static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false,
@@ -34,12 +45,11 @@ extension SnapshotEntry {
     }
 }
 
-/// 4종 위젯이 공유하는 타임라인 공급자.
-///
-/// 지금은 앱이 App Group에 써둔 스냅샷을 읽기만 한다. 서버(4주차)가 붙으면
-/// 여기서 직접 받아와 앱을 열지 않아도 값이 바뀌게 한다.
+/// 위젯 편집이 없는 위젯(환율·AI 이슈)의 타임라인 공급자. [part] 시세를 직접 받아온다.
 /// iOS가 실제 갱신 시점을 결정하므로 "15분마다" 같은 보장 표현은 쓰지 않는다.
 struct SnapshotProvider: TimelineProvider {
+    let part: QuotePart
+
     func placeholder(in context: Context) -> SnapshotEntry {
         SnapshotEntry(date: .now, snapshot: .placeholder)
     }
@@ -49,7 +59,8 @@ struct SnapshotProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SnapshotEntry>) -> Void) {
-        completion(SnapshotEntry.timeline())
+        let part = part
+        Task { completion(await SnapshotEntry.timeline(parts: { _ in [part] })) }
     }
 }
 
@@ -310,16 +321,25 @@ struct SmallHomeCard: View {
     var secondary: String? = nil
     let change: Double?
     let scheme: String
+    /// 기호 왼쪽 아이콘 (코인 로고·주식 로고·국기). nil이면 아이콘 없이.
+    var icon: ItemIcon.Kind? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             WidgetHeader(title: title, snapshot: snapshot)
             Spacer(minLength: 4)
-            Text(symbol)
-                .font(.system(size: 22, weight: .bold))
-                .minimumScaleFactor(0.6)
-            if let name {
-                Text(name).font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 6) {
+                if let icon {
+                    ItemIcon(kind: icon, size: 28)
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(symbol)
+                        .font(.system(size: 22, weight: .bold))
+                        .minimumScaleFactor(0.6)
+                    if let name {
+                        Text(name).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             Spacer(minLength: 4)
             ViewThatFits(in: .horizontal) {
@@ -393,5 +413,67 @@ private struct WidgetBackground: ViewModifier {
                 AccessoryWidgetBackground()
             }
         }
+    }
+}
+
+/// 자유 구성 위젯 칸 왼쪽 아이콘.
+/// - 코인: 위젯 Assets의 `coin-<기호>` 이미지 (spothq/cryptocurrency-icons, CC0). 없으면 글자 동그라미.
+/// - 주식: 위젯이 받아 둔 로고(StockLogos). 없으면 글자 동그라미. 환율: 국기.
+struct ItemIcon: View {
+    enum Kind: Hashable {
+        case coin(String)
+        /// 주식: [id]는 StockLogos 키("us-TSLA", "kr-005930"). 로고가 아직 없으면 [letter] 첫 글자.
+        case stock(id: String, letter: String)
+        case letter(String)
+        case flag(String)
+    }
+
+    let kind: Kind
+    var size: CGFloat = 20
+
+    var body: some View {
+        switch kind {
+        case .coin(let symbol):
+            if UIImage(named: "coin-\(symbol)") != nil {
+                image("coin-\(symbol)")
+            } else {
+                letter(symbol)
+            }
+        case .stock(let id, let text):
+            if let u = StockLogos.fileURL(key: id), let img = UIImage(contentsOfFile: u.path) {
+                Image(uiImage: img).resizable().scaledToFit()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else {
+                letter(text)
+            }
+        case .letter(let text):
+            letter(text)
+        case .flag(let code):
+            if let f = Self.flags[code] {
+                Text(f).font(.system(size: size * 0.85)).frame(width: size, height: size)
+            } else {
+                letter(code)
+            }
+        }
+    }
+
+    private static let flags = ["USD": "🇺🇸", "JPY": "🇯🇵", "EUR": "🇪🇺", "THB": "🇹🇭", "CNY": "🇨🇳"]
+
+    @ViewBuilder
+    private func image(_ name: String) -> some View {
+        if #available(iOS 18.0, *) {
+            Image(name).resizable().widgetAccentedRenderingMode(.fullColor)
+                .scaledToFit().frame(width: size, height: size)
+        } else {
+            Image(name).resizable().scaledToFit().frame(width: size, height: size)
+        }
+    }
+
+    private func letter(_ text: String) -> some View {
+        Text(String(text.prefix(1)).uppercased())
+            .font(.system(size: size * 0.5, weight: .bold))
+            .frame(width: size, height: size)
+            .background(Circle().fill(.secondary.opacity(0.35)))
     }
 }

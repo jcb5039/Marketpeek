@@ -125,6 +125,19 @@ void main() {
       expect(list, ['JPY', 'USD']);
     });
 
+    test('v8: 위젯이 직접 받을 때 쓰는 거래소 코드·USD/KRW·서버 주소를 담는다', () async {
+      final s = await _state();
+      await s.addStock('TSLA');
+
+      final snap = WidgetSync.buildSnapshot(s);
+      expect(snap['schemaVersion'], 8);
+      expect((snap['stocks'] as List).first['excd'], Catalog.stock('TSLA').excd);
+      expect(snap['usdKrw'], 1430.5); // MockQuoteRepository 예시 값
+      // 테스트는 --dart-define 없이 돌므로 서버 주소는 비어 있다.
+      expect((snap['settings'] as Map).containsKey('apiBaseUrl'), isTrue);
+      expect((snap['settings'] as Map)['apiBaseUrl'], isNull);
+    });
+
     test('시세가 없는 종목은 null로 전달', () async {
       final s = await _state();
       await s.addStock('AAPL');
