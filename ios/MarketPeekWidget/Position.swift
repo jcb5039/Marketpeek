@@ -34,7 +34,13 @@ struct PositionProvider: AppIntentTimelineProvider {
     }
 
     func timeline(for configuration: ListPositionIntent, in context: Context) async -> Timeline<SnapshotEntry> {
-        await SnapshotEntry.timeline(parts: { _ in [.stocks] }, offset: configuration.start.rawValue - 1)
+        let offset = configuration.start.rawValue - 1
+        // 홈 화면 2×2만 로고를 보여주므로 그때만 받는다.
+        let wantsLogo = context.family == .systemSmall
+        return await SnapshotEntry.timeline(parts: { _ in [.stocks] }, offset: offset, logos: { snap in
+            guard wantsLogo, let st = snap.stocks.dropFirst(offset).first else { return [] }
+            return ["stock:\(st.ticker)"]
+        })
     }
 }
 
@@ -150,6 +156,7 @@ struct MixProvider: AppIntentTimelineProvider {
         return await SnapshotEntry.timeline(parts: { snap in
             // 칸에 실제로 보이는 항목의 묶음만 받는다 (안 고르면 기본 항목).
             Set((picked.isEmpty ? MixItem.defaults(in: snap) : picked).compactMap(QuotePart.of(itemId:)))
-        }, selected: configuration.selected)
+        }, selected: configuration.selected,
+        logos: { snap in picked.isEmpty ? MixItem.defaults(in: snap) : picked })
     }
 }

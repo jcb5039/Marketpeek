@@ -3,6 +3,7 @@
 // 받은 값은 App Group에 다시 쓰지 않는다. 앱이 쓰는 스냅샷과 서로 덮어쓰는 일을 피하기 위해서다.
 import Foundation
 import Security
+import UIKit
 
 /// 위젯 하나가 보여주는 시세 묶음. 갱신 시각은 고른 묶음을 모두 새로 받았을 때만 "지금"으로 바뀐다.
 enum QuotePart: Hashable {
@@ -516,5 +517,94 @@ extension Fmt {
         f.maximumFractionDigits = fraction
         f.roundingMode = .halfUp
         return f.string(from: NSNumber(value: v)) ?? String(format: "%.\(fraction)f", v)
+    }
+}
+
+// MARK: - 주식 로고 (자유 구성 위젯)
+
+/// 주식 로고를 위젯이 직접 받아 App Group `Library/Caches/logos/`에 저장해 두고 다시 쓴다.
+/// 출처: Financial Modeling Prep 이미지 주소(키 없음, 공식 문서 없음 → 막히면 글자 동그라미로 대체).
+/// 저장소에는 넣지 않는다(재배포 아님). 30일이 지난 로고는 새로 받고, 로고가 없는 종목은 7일 뒤 다시 확인한다.
+enum StockLogos {
+    static let refreshAge: TimeInterval = 30 * 24 * 3600
+    static let missingRetry: TimeInterval = 7 * 24 * 3600
+
+    static var dir: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Snapshot.appGroupId)?
+            .appendingPathComponent("Library/Caches/logos", isDirectory: true)
+    }
+
+    /// "stock:TSLA" → "us-TSLA", "kr:005930" → "kr-005930". 주식이 아니면 nil.
+    static func key(itemId: String) -> String? {
+        let p = itemId.split(separator: ":", maxSplits: 1).map(String.init)
+        guard p.count == 2, !p[1].isEmpty else { return nil }
+        switch p[0] {
+        case "stock": return "us-\(p[1])"
+        case "kr": return "kr-\(p[1])"
+        default: return nil
+        }
+    }
+
+    /// 저장된 로고 파일. 없으면 nil.
+    static func fileURL(key: String) -> URL? {
+        guard let u = dir?.appendingPathComponent("\(key).png"),
+              FileManager.default.fileExists(atPath: u.path) else { return nil }
+        return u
+    }
+
+    /// 고른 칸 중 주식만, 로고가 없거나 오래된 것만 받는다. 실패해도 조용히 넘어간다.
+    static func prefetch(itemIds: [String]) async {
+        guard let dir else { return }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keys = Set(itemIds.compactMap(key(itemId:))).filter(needsFetch)
+        await withTaskGroup(of: Void.self) { g in
+            for k in keys { g.addTask { await fetch(k, into: dir) } }
+        }
+    }
+
+    private static func age(_ u: URL) -> TimeInterval? {
+        guard let d = (try? FileManager.default.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date
+        else { return nil }
+        return Date().timeIntervalSince(d)
+    }
+
+    private static func needsFetch(_ key: String) -> Bool {
+        guard let dir else { return false }
+        if let a = age(dir.appendingPathComponent("\(key).png")) { return a > refreshAge }
+        if let a = age(dir.appendingPathComponent("\(key).none")) { return a > missingRetry }
+        return true
+    }
+
+    private static let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForRequest = 4
+        c.timeoutIntervalForResource = 6
+        return URLSession(configuration: c)
+    }()
+
+    /// 국내는 코스피(.KS)를 먼저, 없으면 코스닥(.KQ).
+    private static func fetch(_ key: String, into dir: URL) async {
+        let code = String(key.dropFirst(3))
+        let names = key.hasPrefix("kr-") ? ["\(code).KS", "\(code).KQ"] : [code]
+        var allMissing = true
+        for n in names {
+            guard let url = URL(string: "https://financialmodelingprep.com/image-stock/\(n).png") else { continue }
+            do {
+                let (data, resp) = try await session.data(from: url)
+                let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                if status == 200, !data.isEmpty, UIImage(data: data) != nil {
+                    try? data.write(to: dir.appendingPathComponent("\(key).png"), options: .atomic)
+                    try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(key).none"))
+                    return
+                }
+                if status != 404 { allMissing = false }
+            } catch {
+                allMissing = false  // 네트워크 실패: 다음 갱신 때 다시
+            }
+        }
+        // 확실히 없을 때만 표시 파일을 남긴다. 예전 로고가 있으면 그대로 둔다.
+        if allMissing, fileURL(key: key) == nil {
+            FileManager.default.createFile(atPath: dir.appendingPathComponent("\(key).none").path, contents: Data())
+        }
     }
 }

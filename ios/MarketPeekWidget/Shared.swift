@@ -19,9 +19,16 @@ extension SnapshotEntry {
     /// 미국장 상태는 시각에 따라 바뀌므로 15분 간격 엔트리를 1시간치 만들고,
     /// 15분 뒤 다시 불러 달라고 요청한다. 실제로 언제 다시 부를지는 iOS가 정한다(보장 아님).
     static func timeline(parts: (Snapshot) -> Set<QuotePart>, offset: Int = 0, changeOnly: Bool = false,
-                         selected: [String?] = []) async -> Timeline<SnapshotEntry> {
+                         selected: [String?] = [],
+                         logos: (Snapshot) -> [String] = { _ in [] }) async -> Timeline<SnapshotEntry> {
         var snap = Snapshot.load()
-        if let s = snap { snap = await LiveQuotes.refresh(s, parts: parts(s)) }
+        if let s = snap {
+            // 주식 로고(자유 구성)는 시세와 동시에 받는다. 둘 다 끝난 뒤 엔트리를 만든다.
+            let logoIds = logos(s)
+            async let logoDone: Void = StockLogos.prefetch(itemIds: logoIds)
+            snap = await LiveQuotes.refresh(s, parts: parts(s))
+            await logoDone
+        }
         let now = Date()
         let entries = (0..<4).map { i in
             SnapshotEntry(date: now.addingTimeInterval(Double(i) * 15 * 60), snapshot: snap,
@@ -314,16 +321,25 @@ struct SmallHomeCard: View {
     var secondary: String? = nil
     let change: Double?
     let scheme: String
+    /// 기호 왼쪽 아이콘 (코인 로고·주식 로고·국기). nil이면 아이콘 없이.
+    var icon: ItemIcon.Kind? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             WidgetHeader(title: title, snapshot: snapshot)
             Spacer(minLength: 4)
-            Text(symbol)
-                .font(.system(size: 22, weight: .bold))
-                .minimumScaleFactor(0.6)
-            if let name {
-                Text(name).font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 6) {
+                if let icon {
+                    ItemIcon(kind: icon, size: 28)
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(symbol)
+                        .font(.system(size: 22, weight: .bold))
+                        .minimumScaleFactor(0.6)
+                    if let name {
+                        Text(name).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             Spacer(minLength: 4)
             ViewThatFits(in: .horizontal) {
@@ -397,5 +413,67 @@ private struct WidgetBackground: ViewModifier {
                 AccessoryWidgetBackground()
             }
         }
+    }
+}
+
+/// 자유 구성 위젯 칸 왼쪽 아이콘.
+/// - 코인: 위젯 Assets의 `coin-<기호>` 이미지 (spothq/cryptocurrency-icons, CC0). 없으면 글자 동그라미.
+/// - 주식: 위젯이 받아 둔 로고(StockLogos). 없으면 글자 동그라미. 환율: 국기.
+struct ItemIcon: View {
+    enum Kind: Hashable {
+        case coin(String)
+        /// 주식: [id]는 StockLogos 키("us-TSLA", "kr-005930"). 로고가 아직 없으면 [letter] 첫 글자.
+        case stock(id: String, letter: String)
+        case letter(String)
+        case flag(String)
+    }
+
+    let kind: Kind
+    var size: CGFloat = 20
+
+    var body: some View {
+        switch kind {
+        case .coin(let symbol):
+            if UIImage(named: "coin-\(symbol)") != nil {
+                image("coin-\(symbol)")
+            } else {
+                letter(symbol)
+            }
+        case .stock(let id, let text):
+            if let u = StockLogos.fileURL(key: id), let img = UIImage(contentsOfFile: u.path) {
+                Image(uiImage: img).resizable().scaledToFit()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else {
+                letter(text)
+            }
+        case .letter(let text):
+            letter(text)
+        case .flag(let code):
+            if let f = Self.flags[code] {
+                Text(f).font(.system(size: size * 0.85)).frame(width: size, height: size)
+            } else {
+                letter(code)
+            }
+        }
+    }
+
+    private static let flags = ["USD": "🇺🇸", "JPY": "🇯🇵", "EUR": "🇪🇺", "THB": "🇹🇭", "CNY": "🇨🇳"]
+
+    @ViewBuilder
+    private func image(_ name: String) -> some View {
+        if #available(iOS 18.0, *) {
+            Image(name).resizable().widgetAccentedRenderingMode(.fullColor)
+                .scaledToFit().frame(width: size, height: size)
+        } else {
+            Image(name).resizable().scaledToFit().frame(width: size, height: size)
+        }
+    }
+
+    private func letter(_ text: String) -> some View {
+        Text(String(text.prefix(1)).uppercased())
+            .font(.system(size: size * 0.5, weight: .bold))
+            .frame(width: size, height: size)
+            .background(Circle().fill(.secondary.opacity(0.35)))
     }
 }

@@ -51,7 +51,7 @@ struct CoinWidgetView: View {
             case .systemSmall:
                 SmallHomeCard(title: "코인", snapshot: snap, symbol: c.symbol, name: c.name,
                               prices: [c.price, Fmt.dropWon(c.price), c.priceShort].compactMap { $0 },
-                              change: c.change, scheme: scheme)
+                              change: c.change, scheme: scheme, icon: .coin(c.symbol))
             default:
                 if entry.changeOnly {
                     ChangeOnlyRows(
@@ -119,7 +119,8 @@ struct StockWidgetView: View {
                 SmallHomeCard(title: title, snapshot: snap, symbol: st.ticker, name: st.name,
                               prices: [st.priceUsd ?? "—"],
                               secondary: s.showStockKrw ? (st.priceKrw ?? st.priceKrwShort) : nil,
-                              change: st.change, scheme: s.colorScheme)
+                              change: st.change, scheme: s.colorScheme,
+                              icon: .stock(id: "us-\(st.ticker)", letter: st.ticker))
             default:
                 HeaderedRows {
                     WidgetHeader(title: title, snapshot: snap)
@@ -208,7 +209,7 @@ struct FxWidgetView: View {
             case .systemSmall:
                 SmallHomeCard(title: "환율", snapshot: snap, symbol: pair, name: fx.name,
                               prices: [fx.rate, Fmt.dropWon(fx.rate)].compactMap { $0 },
-                              change: fx.change, scheme: scheme)
+                              change: fx.change, scheme: scheme, icon: .flag(fx.code))
             default:
                 VStack(alignment: .leading, spacing: 1) {
                     WidgetHeader(title: "환율 · \(pair)", snapshot: snap)
@@ -320,6 +321,7 @@ struct MixItem: Hashable {
     var price: String
     var change: Double?
     var missing = false
+    var icon: ItemIcon.Kind = .letter("")
 
     static func resolve(_ id: String, in s: Snapshot) -> MixItem {
         let parts = id.split(separator: ":", maxSplits: 1).map(String.init)
@@ -329,25 +331,30 @@ struct MixItem: Hashable {
         switch kind {
         case "coin":
             if let c = s.coins.first(where: { $0.symbol == key }) {
-                return MixItem(symbol: c.symbol, price: c.priceShort ?? Fmt.dropWon(c.price) ?? "—", change: c.change)
+                return MixItem(symbol: c.symbol, price: c.priceShort ?? Fmt.dropWon(c.price) ?? "—", change: c.change,
+                               icon: .coin(c.symbol))
             }
         case "kr":
             if let k = (s.krStocks ?? []).first(where: { $0.code == key }) {
-                return MixItem(symbol: k.name, price: k.priceShort ?? Fmt.dropWon(k.price) ?? noPrice, change: k.change)
+                return MixItem(symbol: k.name, price: k.priceShort ?? Fmt.dropWon(k.price) ?? noPrice, change: k.change,
+                               icon: .stock(id: "kr-\(k.code)", letter: k.name))
             }
         case "stock":
             if let st = s.stocks.first(where: { $0.ticker == key }) {
-                return MixItem(symbol: st.ticker, price: st.priceUsd ?? noPrice, change: st.change)
+                return MixItem(symbol: st.ticker, price: st.priceUsd ?? noPrice, change: st.change,
+                               icon: .stock(id: "us-\(st.ticker)", letter: st.ticker))
             }
         case "fx":
             let fxs = s.fxList ?? (s.fx.map { [$0] } ?? [])
             if let fx = fxs.first(where: { $0.code == key }) {
                 return MixItem(symbol: fx.unit == 1 ? fx.code : "\(fx.unit)\(fx.code)",
-                               price: Fmt.dropWon(fx.rate) ?? "—", change: fx.change)
+                               price: Fmt.dropWon(fx.rate) ?? "—", change: fx.change,
+                               icon: .flag(fx.code))
             }
         default: break
         }
-        return MixItem(symbol: key.isEmpty ? "—" : key, price: "앱에서 추가하세요", change: nil, missing: true)
+        return MixItem(symbol: key.isEmpty ? "—" : key, price: "앱에서 추가하세요", change: nil, missing: true,
+                       icon: .letter(key))
     }
 
     /// 아무 칸도 안 골랐을 때: 첫 코인 · 첫 종목 · 앱에서 고른 환율.
@@ -388,21 +395,24 @@ struct MixWidgetView: View {
     private func rows(_ items: [MixItem], _ scheme: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 4) {
-                        Text(item.symbol).font(.system(size: 14, weight: .bold))
-                            .minimumScaleFactor(0.7)
-                        Spacer(minLength: 2)
-                        ChangeText(pct: item.change, scheme: scheme)
-                            .font(.system(size: 13, weight: .semibold))
+                HStack(alignment: .center, spacing: 6) {
+                    ItemIcon(kind: item.icon, size: 20)
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 4) {
+                            Text(item.symbol).font(.system(size: 14, weight: .bold))
+                                .minimumScaleFactor(0.7)
+                            Spacer(minLength: 2)
+                            ChangeText(pct: item.change, scheme: scheme)
+                                .font(.system(size: 13, weight: .semibold))
+                                .monospacedDigit()
+                                .layoutPriority(1)
+                        }
+                        Text(item.price)
+                            .font(.system(size: 12))
                             .monospacedDigit()
-                            .layoutPriority(1)
+                            .foregroundStyle(.secondary)
+                            .minimumScaleFactor(0.7)
                     }
-                    Text(item.price)
-                        .font(.system(size: 12))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .minimumScaleFactor(0.7)
                 }
                 .lineLimit(1)
             }
