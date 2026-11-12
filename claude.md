@@ -54,7 +54,7 @@ assets/stocks/                  국내(kr.json)·미국(us.json) 전체 종목. 
 - 위젯 kind (`CoinWidget`, `StockWidget`, `FxWidget`, `IssueWidget`, `MixWidget`)는 Dart `widgetKinds`와 Swift 정의가 일치해야 한다.
 - 코인·미국주식은 홈 목록 앞 6개(`AppState.maxWidgetItems`)까지 스냅샷에 담는다. 위젯마다 "위젯 편집"(AppIntent, `Position.swift`)에서 몇 번째부터 보일지 고르고, 사각형은 거기서 `settings.coinRows`/`stockRows`개를 보여준다.
 - 위젯은 타임라인을 만들 때 시세를 직접 받는다(`LiveQuotes.swift`): 앱 스냅샷의 종목 목록·설정을 읽고 코인은 업비트, 환율·이슈는 `settings.apiBaseUrl` 서버, 주식은 KIS에서 받아 덮어쓴다. App Group에 다시 쓰지는 않는다.
-  - KIS 키·토큰은 App Group을 Keychain 접근 그룹으로 써서 앱과 공유한다(`SecureKisCredentialStore.sharedOptions`). 위젯은 토큰을 발급하지 않고 앱이 받아 둔 토큰만 쓴다(만료되면 주식은 앱이 써둔 값).
+  - KIS 키·토큰은 App Group을 Keychain 접근 그룹으로 써서 앱과 공유한다(`SecureKisCredentialStore.sharedOptions`). 토큰이 없거나 만료되면 위젯이 직접 발급해 같은 Keychain 자리에 쓴다(`KisTokenIssuer`). 발급 한도(1분 1회) 때문에 App Group `kis.lastIssueAttempt`로 2분 안 재시도를 막는다. 결과는 App Group `widgetDiag`에 남는다.
   - 갱신 시각(`updatedAt`)은 그 위젯이 보여주는 묶음(`QuotePart`)을 모두 새로 받았을 때만 지금으로 바뀐다. 포맷 규칙은 `lib/util/format.dart`와 `Fmt`(LiveQuotes.swift)가 같아야 한다.
 
 ## 명령

@@ -185,17 +185,28 @@ enum LiveQuotes {
     static let kisGap: UInt64 = 350_000_000
     static let kisRetryDelay: UInt64 = 1_100_000_000
 
-    /// 위젯은 토큰을 새로 발급하지 않는다. 위젯 여러 개가 동시에 발급하면 발급 한도(1분 1회)에 걸리기 때문이다.
-    /// 앱이 받아 둔 토큰이 만료됐으면 실패로 보고 앱이 써둔 값을 그대로 둔다.
+    /// 앱이 받아 둔 토큰(24시간 유효)을 쓰고, 없거나 만료됐으면 위젯이 직접 새로 받는다([KisTokenIssuer]).
+    /// 그래야 앱을 하루 넘게 열지 않아도 위젯 주식이 계속 갱신된다.
     static func fetchStocks(us: [(String, String?)], kr: [String]) async -> Fetch<StockQuotes> {
         let usJobs = us.compactMap { t, ex in ex.map { (t, $0) } }
         if usJobs.isEmpty && kr.isEmpty { return .nothing }
         guard let appKey = Keychain.read("kis.appKey"), let appSecret = Keychain.read("kis.appSecret") else {
+            WidgetDiag.note("stocks", "noKey")
             return .nothing  // 증권사 미연결: 위젯은 연결 안내를 보여준다.
         }
-        guard let token = Keychain.read("kis.token"),
-              let exp = Keychain.read("kis.tokenExpiresAt").flatMap(Snapshot.parseDate),
-              exp > Date().addingTimeInterval(60) else { return .failed }
+        let token: String
+        if let saved = KisTokenIssuer.validSaved() {
+            token = saved
+        } else {
+            switch await KisTokenIssuer.shared.issue(appKey: appKey, appSecret: appSecret) {
+            case .issued(let t):
+                token = t
+                WidgetDiag.note("tokenIssued", ISO8601DateFormatter().string(from: Date()))
+            case .failed(let why):
+                WidgetDiag.note("stocks", "tokenFailed: \(why)")
+                return .failed
+            }
+        }
 
         let key = "kis:" + usJobs.map(\.0).joined(separator: ",") + "|" + kr.joined(separator: ",")
         let r: Fetch<StockQuotes> = await Reuse.shared.value(key) {
@@ -214,12 +225,17 @@ enum LiveQuotes {
                     case .kr(let code): out.kr[code] = p
                     case .us(let t, _): out.us[t] = p
                     }
-                case .tokenExpired: break jobs
+                case .tokenExpired:
+                    // 증권사가 만료라고 하면 앱처럼 저장된 토큰을 지워 다음 갱신 때 새로 받게 한다.
+                    Keychain.delete("kis.token")
+                    Keychain.delete("kis.tokenExpiresAt")
+                    break jobs
                 case .failed: continue
                 }
             }
             return out.us.isEmpty && out.kr.isEmpty ? nil : out
         }
+        WidgetDiag.note("stocks", r.value == nil ? "fetchFailed" : "ok")
         return r
     }
 
@@ -331,22 +347,124 @@ actor Reuse {
     }
 }
 
-/// 앱(flutter_secure_storage, SecureKisCredentialStore)이 App Group 접근 그룹에 저장한 문자열을 읽는다.
+/// KIS 접속 토큰 발급 (POST /oauth2/tokenP). Dart KisQuoteRepository._issueToken과 같은 요청이다.
+/// 발급은 1분에 1번만 되므로 확장 프로세스 안에서는 한 번만 보내고(액터),
+/// 앱·위젯 사이에서는 App Group에 마지막 시도 시각을 적어 2분 안에는 다시 보내지 않는다.
+actor KisTokenIssuer {
+    static let shared = KisTokenIssuer()
+    static let lastAttemptKey = "kis.lastIssueAttempt"
+    static let minInterval: TimeInterval = 120
+
+    enum Outcome: Sendable {
+        case issued(String)
+        case failed(String)
+    }
+
+    private var inFlight: Task<Outcome, Never>?
+
+    /// 저장된 토큰이 1분 넘게 남았으면 그 값.
+    static func validSaved() -> String? {
+        guard let t = Keychain.read("kis.token"),
+              let exp = Keychain.read("kis.tokenExpiresAt").flatMap(Snapshot.parseDate),
+              exp > Date().addingTimeInterval(60) else { return nil }
+        return t
+    }
+
+    func issue(appKey: String, appSecret: String) async -> Outcome {
+        if let t = inFlight { return await t.value }
+        let task = Task { await Self.request(appKey: appKey, appSecret: appSecret) }
+        inFlight = task
+        let r = await task.value
+        inFlight = nil
+        return r
+    }
+
+    private static func request(appKey: String, appSecret: String) async -> Outcome {
+        // 기다리는 사이 앱이 새로 받았을 수 있다.
+        if let t = validSaved() { return .issued(t) }
+        let d = UserDefaults(suiteName: Snapshot.appGroupId)
+        if let last = d?.object(forKey: lastAttemptKey) as? Date, Date().timeIntervalSince(last) < minInterval {
+            return .failed("recentAttempt")
+        }
+        d?.set(Date(), forKey: lastAttemptKey)
+
+        var req = URLRequest(url: URL(string: LiveQuotes.kisBase + "/oauth2/tokenP")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "content-type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "grant_type": "client_credentials", "appkey": appKey, "appsecret": appSecret,
+        ])
+        guard let body = await LiveQuotes.getJSON(req, anyStatus: true) as? [String: Any] else {
+            return .failed("network")
+        }
+        guard let token = body["access_token"] as? String, !token.isEmpty else {
+            let code = (body["error_code"] ?? body["msg_cd"] ?? "") as? String ?? ""
+            let msg = (body["error_description"] ?? body["msg1"] ?? "") as? String ?? ""
+            return .failed("\(code) \(msg)".trimmingCharacters(in: .whitespaces))
+        }
+        let seconds = LiveQuotes.num(body["expires_in"]) ?? 86400
+        let exp = Date().addingTimeInterval(seconds)
+        // 앱(Dart DateTime.tryParse)이 그대로 읽는 ISO UTC 형식으로 저장한다.
+        if !(Keychain.write("kis.token", token)
+             && Keychain.write("kis.tokenExpiresAt", ISO8601DateFormatter().string(from: exp))) {
+            // 저장을 못 해도 이번 갱신에는 쓴다. 저장이 계속 실패할 때 2분마다 발급(알림)하지 않게 1시간 미룬다.
+            d?.set(Date().addingTimeInterval(3600), forKey: lastAttemptKey)
+            WidgetDiag.note("tokenSave", "failed")
+        }
+        return .issued(token)
+    }
+}
+
+/// 앱(flutter_secure_storage, SecureKisCredentialStore)과 같은 자리의 Keychain 항목.
+/// 서비스 이름·계정(키 이름)·접근 그룹(App Group)이 같아야 서로 읽힌다.
 enum Keychain {
     static let service = "flutter_secure_storage_service"
 
+    private static func base(_ account: String) -> [CFString: Any] {
+        [kSecClass: kSecClassGenericPassword,
+         kSecAttrService: service,
+         kSecAttrAccount: account,
+         kSecAttrAccessGroup: Snapshot.appGroupId]
+    }
+
     static func read(_ account: String) -> String? {
-        let q: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecAttrAccessGroup: Snapshot.appGroupId,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
+        var q = base(account)
+        q[kSecReturnData] = true
+        q[kSecMatchLimit] = kSecMatchLimitOne
         var ref: AnyObject?
         guard SecItemCopyMatching(q as CFDictionary, &ref) == errSecSuccess, let data = ref as? Data else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    /// 있으면 값만 바꾸고, 없으면 잠금 상태에서도 읽히게(처음 잠금 해제 후) 새로 만든다.
+    @discardableResult
+    static func write(_ account: String, _ value: String) -> Bool {
+        let data = Data(value.utf8)
+        let status = SecItemUpdate(base(account) as CFDictionary, [kSecValueData: data] as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        var add = base(account)
+        add[kSecValueData] = data
+        add[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func delete(_ account: String) {
+        SecItemDelete(base(account) as CFDictionary)
+    }
+}
+
+/// 위젯이 시세를 받을 때의 결과를 App Group 키 `widgetDiag`에 남긴다 (원인 확인용, 앱 화면에는 안 보임).
+/// 폰에서 `xcrun devicectl device copy from --domain-type appGroupDataContainer`로 꺼내 읽는다.
+enum WidgetDiag {
+    static let key = "widgetDiag"
+
+    static func note(_ field: String, _ value: String) {
+        guard let d = UserDefaults(suiteName: Snapshot.appGroupId) else { return }
+        var all = d.dictionary(forKey: key) as? [String: String] ?? [:]
+        all[field] = value
+        all[field + "At"] = ISO8601DateFormatter().string(from: Date())
+        d.set(all, forKey: key)
     }
 }
 
