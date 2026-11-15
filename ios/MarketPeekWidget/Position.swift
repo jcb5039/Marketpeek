@@ -1,6 +1,22 @@
 // 코인·미국주식 위젯의 "위젯 편집" 설정: 몇 번째 종목부터 보여줄지(공통), 코인은 표시 정보도 고른다.
+// 홈 화면 2×2에서는 배경(종목 로고)도 고른다.
 import AppIntents
 import WidgetKit
+
+/// 단일 종목 홈 위젯(2×2)의 배경. 그리는 방법은 Shared.swift `LogoBackdrop`.
+/// 잠금화면은 iOS가 단색으로 그려서 적용하지 않는다.
+enum LogoBackground: String, AppEnum {
+    case plain, watermark, fill, color, blur
+
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "배경"
+    static let caseDisplayRepresentations: [LogoBackground: DisplayRepresentation] = [
+        .plain: "기본",
+        .watermark: "로고 크게",
+        .fill: "로고 꽉 채움",
+        .color: "로고 색",
+        .blur: "로고 블러",
+    ]
+}
 
 /// 표시 순서. 스냅샷에는 홈 목록 앞 6개까지 담긴다(Dart AppState.maxWidgetItems).
 enum ListPosition: Int, AppEnum {
@@ -15,10 +31,13 @@ enum ListPosition: Int, AppEnum {
 
 struct ListPositionIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "표시 순서"
-    static let description = IntentDescription("홈 목록에서 몇 번째 종목부터 이 위젯에 보여줄지 골라요.")
+    static let description = IntentDescription("홈 목록에서 몇 번째 종목부터 이 위젯에 보여줄지 골라요. 배경은 홈 화면 2×2에만 적용돼요.")
 
     @Parameter(title: "표시 순서", default: .p1)
     var start: ListPosition
+
+    @Parameter(title: "배경", default: .watermark)
+    var background: LogoBackground
 
     init() {}
     init(start: ListPosition) { self.start = start }
@@ -30,14 +49,16 @@ struct PositionProvider: AppIntentTimelineProvider {
     }
 
     func snapshot(for configuration: ListPositionIntent, in context: Context) async -> SnapshotEntry {
-        .current(isPreview: context.isPreview, offset: configuration.start.rawValue - 1)
+        .current(isPreview: context.isPreview, offset: configuration.start.rawValue - 1,
+                 background: configuration.background)
     }
 
     func timeline(for configuration: ListPositionIntent, in context: Context) async -> Timeline<SnapshotEntry> {
         let offset = configuration.start.rawValue - 1
         // 홈 화면 2×2만 로고를 보여주므로 그때만 받는다.
         let wantsLogo = context.family == .systemSmall
-        return await SnapshotEntry.timeline(parts: { _ in [.stocks] }, offset: offset, logos: { snap in
+        return await SnapshotEntry.timeline(parts: { _ in [.stocks] }, offset: offset,
+                                            background: configuration.background, logos: { snap in
             guard wantsLogo, let st = snap.stocks.dropFirst(offset).first else { return [] }
             return ["stock:\(st.ticker)"]
         })
@@ -58,13 +79,16 @@ enum CoinDisplayStyle: String, AppEnum {
 
 struct CoinWidgetIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "코인 위젯"
-    static let description = IntentDescription("몇 번째 코인부터, 어떤 정보를 보여줄지 골라요. 표시 정보는 사각형 위젯에만 적용돼요.")
+    static let description = IntentDescription("몇 번째 코인부터, 어떤 정보를 보여줄지 골라요. 표시 정보는 사각형 위젯에만, 배경은 홈 화면 2×2에만 적용돼요.")
 
     @Parameter(title: "표시 순서", default: .p1)
     var start: ListPosition
 
     @Parameter(title: "표시 정보", default: .prices)
     var style: CoinDisplayStyle
+
+    @Parameter(title: "배경", default: .watermark)
+    var background: LogoBackground
 
     init() {}
 }
@@ -76,12 +100,13 @@ struct CoinProvider: AppIntentTimelineProvider {
 
     func snapshot(for configuration: CoinWidgetIntent, in context: Context) async -> SnapshotEntry {
         .current(isPreview: context.isPreview, offset: configuration.start.rawValue - 1,
-                 changeOnly: configuration.style == .changeOnly)
+                 changeOnly: configuration.style == .changeOnly, background: configuration.background)
     }
 
     func timeline(for configuration: CoinWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
         await SnapshotEntry.timeline(parts: { _ in [.coins] }, offset: configuration.start.rawValue - 1,
-                                     changeOnly: configuration.style == .changeOnly)
+                                     changeOnly: configuration.style == .changeOnly,
+                                     background: configuration.background)
     }
 }
 

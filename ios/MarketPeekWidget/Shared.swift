@@ -1,5 +1,6 @@
 import SwiftUI
 import WidgetKit
+import CoreImage.CIFilterBuiltins
 
 // MARK: - Timeline
 
@@ -12,6 +13,8 @@ struct SnapshotEntry: TimelineEntry {
     var changeOnly: Bool = false
     /// 자유 구성 위젯의 칸별 항목 id ("coin:BTC", "stock:NVDA", "fx:USD"). 위젯 편집에서 고른다.
     var selected: [String?] = []
+    /// 단일 종목 홈 위젯(2×2)의 배경. 코인·미국주식 위젯 편집에서 고른다.
+    var background: LogoBackground = .plain
 }
 
 extension SnapshotEntry {
@@ -19,7 +22,7 @@ extension SnapshotEntry {
     /// 미국장 상태는 시각에 따라 바뀌므로 15분 간격 엔트리를 1시간치 만들고,
     /// 15분 뒤 다시 불러 달라고 요청한다. 실제로 언제 다시 부를지는 iOS가 정한다(보장 아님).
     static func timeline(parts: (Snapshot) -> Set<QuotePart>, offset: Int = 0, changeOnly: Bool = false,
-                         selected: [String?] = [],
+                         selected: [String?] = [], background: LogoBackground = .plain,
                          logos: (Snapshot) -> [String] = { _ in [] }) async -> Timeline<SnapshotEntry> {
         var snap = Snapshot.load()
         if let s = snap {
@@ -32,16 +35,16 @@ extension SnapshotEntry {
         let now = Date()
         let entries = (0..<4).map { i in
             SnapshotEntry(date: now.addingTimeInterval(Double(i) * 15 * 60), snapshot: snap,
-                          offset: offset, changeOnly: changeOnly, selected: selected)
+                          offset: offset, changeOnly: changeOnly, selected: selected, background: background)
         }
         return Timeline(entries: entries, policy: .after(now.addingTimeInterval(15 * 60)))
     }
 
     static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false,
-                        selected: [String?] = []) -> SnapshotEntry {
+                        selected: [String?] = [], background: LogoBackground = .plain) -> SnapshotEntry {
         let snap = isPreview ? (Snapshot.load() ?? .placeholder) : Snapshot.load()
         return SnapshotEntry(date: .now, snapshot: snap, offset: offset, changeOnly: changeOnly,
-                             selected: selected)
+                             selected: selected, background: background)
     }
 }
 
@@ -385,21 +388,35 @@ extension View {
     /// iOS 17+는 containerBackground가 필수. 잠금화면은 시스템 배경을 쓴다.
     /// [squareSmall]이면 작은 칸(accessoryCircular)에서 원형 배경을 깔지 않는다
     /// (코인 작은 사각형 위젯이 직접 사각형 배경을 그린다).
-    func widgetBackground(squareSmall: Bool = false) -> some View {
-        modifier(WidgetBackground(squareSmall: squareSmall))
+    /// [backdrop]이 있으면 홈 화면 2×2에서 종목 로고를 배경에 깐다 (단일 종목 위젯).
+    func widgetBackground(squareSmall: Bool = false, backdrop: Backdrop? = nil) -> some View {
+        modifier(WidgetBackground(squareSmall: squareSmall, backdrop: backdrop))
     }
 }
 
+/// 홈 위젯 기본 배경색 (앱 다크 테마와 같은 짙은 회색).
+let widgetBaseColor = Color(red: 0.11, green: 0.11, blue: 0.12)
+
 private struct WidgetBackground: ViewModifier {
     let squareSmall: Bool
+    var backdrop: Backdrop? = nil
     @Environment(\.widgetFamily) private var family
 
     func body(content: Content) -> some View {
         if family == .systemSmall {
             // 홈 화면은 컬러로 그려진다: 앱 다크 테마와 같은 짙은 배경 + 흰 글자.
-            content
-                .environment(\.colorScheme, .dark)
-                .containerBackground(for: .widget) { Color(red: 0.11, green: 0.11, blue: 0.12) }
+            // 홈 화면 "색조·투명" 모드에서는 iOS가 이 배경을 지우고 단색으로 그린다.
+            if let backdrop, backdrop.style != .plain {
+                content
+                    .environment(\.colorScheme, .dark)
+                    // 색이 있는 배경 위에서도 글자가 읽히게 옅은 그림자를 준다.
+                    .shadow(color: .black.opacity(backdrop.style == .watermark ? 0 : 0.55), radius: 2, y: 1)
+                    .containerBackground(for: .widget) { LogoBackdrop(backdrop: backdrop) }
+            } else {
+                content
+                    .environment(\.colorScheme, .dark)
+                    .containerBackground(for: .widget) { widgetBaseColor }
+            }
         } else {
             lockScreen(content)
         }
@@ -475,5 +492,97 @@ struct ItemIcon: View {
             .font(.system(size: size * 0.5, weight: .bold))
             .frame(width: size, height: size)
             .background(Circle().fill(.secondary.opacity(0.35)))
+    }
+}
+
+// MARK: - 단일 종목 위젯 로고 배경
+
+/// 홈 위젯 배경에 깔 로고와 방식. 로고가 없으면(아직 못 받은 주식 등) nil → 기본 배경.
+struct Backdrop {
+    let image: UIImage
+    let style: LogoBackground
+
+    /// 코인 위젯: 위젯 편집 순서가 가리키는 코인의 로고 (위젯 Assets `coin-<기호>`).
+    static func coin(_ e: SnapshotEntry) -> Backdrop? {
+        guard e.background != .plain,
+              let c = e.snapshot?.coins.dropFirst(e.offset).first,
+              let img = UIImage(named: "coin-\(c.symbol)") else { return nil }
+        return Backdrop(image: img, style: e.background)
+    }
+
+    /// 미국주식 위젯: 위젯이 받아 둔 로고 (StockLogos "us-<티커>").
+    static func stock(_ e: SnapshotEntry) -> Backdrop? {
+        guard e.background != .plain,
+              let st = e.snapshot?.stocks.dropFirst(e.offset).first,
+              let u = StockLogos.fileURL(key: "us-\(st.ticker)"),
+              let img = UIImage(contentsOfFile: u.path) else { return nil }
+        return Backdrop(image: img, style: e.background)
+    }
+}
+
+/// 로고 배경 4종. 로고 원본이 100~250px로 작아서 크게 키우는 방식(꽉 채움)은 흐릿할 수 있다.
+struct LogoBackdrop: View {
+    let backdrop: Backdrop
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let side = max(w, h)
+            ZStack {
+                widgetBaseColor
+                switch backdrop.style {
+                case .plain:
+                    EmptyView()
+                case .watermark:
+                    // 정중앙에 크게, 흐리게.
+                    logo.scaledToFit()
+                        .frame(width: side * 0.75, height: side * 0.75)
+                        .opacity(0.3)
+                        .position(x: w / 2, y: h / 2)
+                case .fill:
+                    logo.scaledToFill().frame(width: w, height: h).clipped()
+                    LinearGradient(colors: [.black.opacity(0.35), .black.opacity(0.7)],
+                                   startPoint: .top, endPoint: .bottom)
+                case .color:
+                    let c = Self.averageColor(backdrop.image) ?? (0.3, 0.3, 0.32)
+                    LinearGradient(colors: [rgb(c, 0.85), rgb(c, 0.4)], startPoint: .top, endPoint: .bottom)
+                case .blur:
+                    logo.scaledToFill()
+                        .frame(width: side * 1.3, height: side * 1.3)
+                        .blur(radius: 24)
+                        .position(x: w / 2, y: h / 2)
+                    Color.black.opacity(0.3)
+                }
+            }
+            .frame(width: w, height: h)
+        }
+    }
+
+    private var logo: some View {
+        Image(uiImage: backdrop.image).resizable()
+    }
+
+    private func rgb(_ c: (Double, Double, Double), _ k: Double) -> Color {
+        Color(red: c.0 * k, green: c.1 * k, blue: c.2 * k)
+    }
+
+    /// 투명한 부분을 뺀 평균 색 (0~1). CIAreaAverage 결과는 알파가 곱해져 있으므로 알파로 나눈다.
+    static func averageColor(_ image: UIImage) -> (Double, Double, Double)? {
+        guard let ci = CIImage(image: image) else { return nil }
+        let f = CIFilter.areaAverage()
+        f.inputImage = ci
+        f.extent = ci.extent
+        guard let out = f.outputImage else { return nil }
+        var px = [UInt8](repeating: 0, count: 4)
+        CIContext(options: [.workingColorSpace: NSNull()])
+            .render(out, toBitmap: &px, rowBytes: 4, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                    format: .RGBA8, colorSpace: nil)
+        let a = Double(px[3]) / 255
+        guard a > 0.01 else { return nil }
+        func ch(_ v: UInt8) -> Double { min(1, Double(v) / 255 / a) }
+        // 흰 바탕 로고(애플 등)는 평균이 밝은 회색이라 흰 글자가 안 읽힌다. 가장 밝은 채널을 0.6 이하로 낮춘다.
+        let (r, g, b) = (ch(px[0]), ch(px[1]), ch(px[2]))
+        let k = min(1, 0.6 / max(r, g, b, 0.001))
+        return (r * k, g * k, b * k)
     }
 }

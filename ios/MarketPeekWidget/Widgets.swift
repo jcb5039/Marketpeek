@@ -26,10 +26,10 @@ struct CoinWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: CoinWidgetIntent.self, provider: CoinProvider()) { entry in
-            CoinWidgetView(entry: entry).widgetBackground(squareSmall: true)
+            CoinWidgetView(entry: entry).widgetBackground(squareSmall: true, backdrop: .coin(entry))
         }
         .configurationDisplayName("코인")
-        .description("고른 코인의 원화 가격과 등락률. 길게 눌러 몇 번째 코인부터 보일지 고를 수 있어요.")
+        .description("고른 코인의 원화 가격과 등락률. 길게 눌러 몇 번째 코인부터 보일지, 배경을 어떻게 할지 고를 수 있어요.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
     }
 }
@@ -84,10 +84,10 @@ struct StockWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: ListPositionIntent.self, provider: PositionProvider()) { entry in
-            StockWidgetView(entry: entry).widgetBackground()
+            StockWidgetView(entry: entry).widgetBackground(backdrop: .stock(entry))
         }
         .configurationDisplayName("미국주식")
-        .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 몇 번째 종목부터 보일지 고를 수 있어요.")
+        .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 몇 번째 종목부터 보일지, 배경을 어떻게 할지 고를 수 있어요.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
     }
 }
@@ -447,6 +447,13 @@ private let changeOnlyEntry = SnapshotEntry(date: .now, snapshot: .placeholder, 
 #Preview("AI 이슈 · 사각형", as: .accessoryRectangular) { IssueWidget() } timeline: { previewEntry; emptyEntry }
 #Preview("AI 이슈 · 한 줄", as: .accessoryInline) { IssueWidget() } timeline: { previewEntry }
 #Preview("코인 · 홈 2×2", as: .systemSmall) { CoinWidget() } timeline: { previewEntry; fourthEntry; emptyEntry }
+// 로고 배경 4종 (미국주식 로고는 위젯이 받아 둔 파일이라 Canvas에서는 기본 배경으로 보인다).
+#Preview("코인 · 홈 2×2 · 로고 배경", as: .systemSmall) { CoinWidget() } timeline: {
+    SnapshotEntry(date: .now, snapshot: .placeholder, background: .watermark)
+    SnapshotEntry(date: .now, snapshot: .placeholder, background: .fill)
+    SnapshotEntry(date: .now, snapshot: .placeholder, background: .color)
+    SnapshotEntry(date: .now, snapshot: .placeholder, background: .blur)
+}
 #Preview("미국주식 · 홈 2×2", as: .systemSmall) { StockWidget() } timeline: { previewEntry; emptyEntry }
 #Preview("환율 · 홈 2×2", as: .systemSmall) { FxWidget() } timeline: { previewEntry; emptyEntry }
 #Preview("자유 구성 · 기본값", as: .systemSmall) { MixWidget() } timeline: { previewEntry; emptyEntry }
