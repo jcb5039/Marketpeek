@@ -1,6 +1,8 @@
 // MarketPeek 시세 서버 진입점: 예약 실행(cron)으로 환율 캐시를 채우고 GET /quotes로 내려준다.
+// GET /issue는 AI 어제 이슈(지금은 예시 문장).
 // 주식 시세는 앱이 한국투자증권 Open API에서 사용자 키로 직접 받는다 (Finnhub는 재배포 금지라 제거).
 import { fetchFx, type FxQuote } from './eximbank';
+import { sampleIssue } from './issue';
 
 export interface Env {
   QUOTES: KVNamespace;
@@ -21,6 +23,7 @@ export default {
     const url = new URL(req.url);
     if (req.method !== 'GET') return json({ error: 'method not allowed' }, 405);
     if (url.pathname === '/health') return json({ ok: true });
+    if (url.pathname === '/issue') return json(sampleIssue(new Date()));
     if (url.pathname !== '/quotes') return json({ error: 'not found' }, 404);
 
     let fx = await env.QUOTES.get<Cached<FxQuote>>('fx', 'json');
@@ -29,7 +32,8 @@ export default {
 
     return json({
       fx: pick(fx?.data, list(url.searchParams.get('fx'))),
-      // AI 어제 이슈는 아직 없음. 생기면 { text, shortText, generatedAt }.
+      // AI 어제 이슈는 아직 예시뿐이라(GET /issue) 앱·위젯에 진짜처럼 뜨지 않게 null로 둔다.
+      // 실제 요약이 생기면 { text, shortText, generatedAt }.
       issue: null,
       fxUpdatedAt: fx?.updatedAt ?? null,
     });
