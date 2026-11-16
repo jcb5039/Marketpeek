@@ -26,10 +26,10 @@ struct CoinWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: CoinWidgetIntent.self, provider: CoinProvider()) { entry in
-            CoinWidgetView(entry: entry).widgetBackground(squareSmall: true)
+            CoinWidgetView(entry: entry).widgetBackground(squareSmall: true, backdrop: .coin(entry))
         }
         .configurationDisplayName("코인")
-        .description("고른 코인의 원화 가격과 등락률. 길게 눌러 몇 번째 코인부터 보일지 고를 수 있어요.")
+        .description("고른 코인의 원화 가격과 등락률. 길게 눌러 몇 번째 코인부터 보일지, 배경을 어떻게 할지 고를 수 있어요.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
     }
 }
@@ -49,7 +49,7 @@ struct CoinWidgetView: View {
             case .accessoryCircular:
                 SmallSquareQuote(item: .init(symbol: c.symbol, change: c.change), scheme: scheme)
             case .systemSmall:
-                SmallHomeCard(title: "코인", snapshot: snap, symbol: c.symbol, name: c.name,
+                SmallHomeCard(title: "코인", snapshot: snap, now: entry.date, symbol: c.symbol, name: c.name,
                               prices: [c.price, Fmt.dropWon(c.price), c.priceShort].compactMap { $0 },
                               change: c.change, scheme: scheme, icon: .coin(c.symbol))
             default:
@@ -60,7 +60,7 @@ struct CoinWidgetView: View {
                     )
                 } else {
                     HeaderedRows {
-                        WidgetHeader(title: "코인", snapshot: snap)
+                        WidgetHeader(title: "코인", snapshot: snap, now: entry.date)
                     } rows: {
                         PriceGrid(variants: [
                             // 1) 100,000,000원  2) 100,000,000  3) 1억
@@ -84,10 +84,10 @@ struct StockWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: ListPositionIntent.self, provider: PositionProvider()) { entry in
-            StockWidgetView(entry: entry).widgetBackground()
+            StockWidgetView(entry: entry).widgetBackground(backdrop: .stock(entry))
         }
         .configurationDisplayName("미국주식")
-        .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 몇 번째 종목부터 보일지 고를 수 있어요.")
+        .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 몇 번째 종목부터 보일지, 배경을 어떻게 할지 고를 수 있어요.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
     }
 }
@@ -116,14 +116,14 @@ struct StockWidgetView: View {
             case .accessoryCircular:
                 CircularQuote(symbol: st.ticker, change: st.change, scheme: s.colorScheme)
             case .systemSmall:
-                SmallHomeCard(title: title, snapshot: snap, symbol: st.ticker, name: st.name,
+                SmallHomeCard(title: title, snapshot: snap, now: entry.date, symbol: st.ticker, name: st.name,
                               prices: [st.priceUsd ?? "—"],
                               secondary: s.showStockKrw ? (st.priceKrw ?? st.priceKrwShort) : nil,
                               change: st.change, scheme: s.colorScheme,
                               icon: .stock(id: "us-\(st.ticker)", letter: st.ticker))
             default:
                 HeaderedRows {
-                    WidgetHeader(title: title, snapshot: snap)
+                    WidgetHeader(title: title, snapshot: snap, now: entry.date)
                 } rows: {
                     if rows.count == 1 {
                         single(st, s)
@@ -207,12 +207,12 @@ struct FxWidgetView: View {
                     .padding(.horizontal, 3)
                 }
             case .systemSmall:
-                SmallHomeCard(title: "환율", snapshot: snap, symbol: pair, name: fx.name,
+                SmallHomeCard(title: "환율", snapshot: snap, now: entry.date, symbol: pair, name: fx.name,
                               prices: [fx.rate, Fmt.dropWon(fx.rate)].compactMap { $0 },
                               change: fx.change, scheme: scheme, icon: .flag(fx.code))
             default:
                 VStack(alignment: .leading, spacing: 1) {
-                    WidgetHeader(title: "환율 · \(pair)", snapshot: snap)
+                    WidgetHeader(title: "환율 · \(pair)", snapshot: snap, now: entry.date)
                     Text(fx.rate ?? "—")
                         .font(.headline)
                         .trend(fx.change)
@@ -380,7 +380,7 @@ struct MixWidgetView: View {
                 // 세로가 모자라면 제목 줄을 빼고 항목만 보여준다.
                 ViewThatFits(in: .vertical) {
                     VStack(alignment: .leading, spacing: 6) {
-                        WidgetHeader(title: "자유 구성", snapshot: snap)
+                        WidgetHeader(title: "자유 구성", snapshot: snap, now: entry.date)
                         rows(items, scheme)
                     }
                     rows(items, scheme)
@@ -447,6 +447,13 @@ private let changeOnlyEntry = SnapshotEntry(date: .now, snapshot: .placeholder, 
 #Preview("AI 이슈 · 사각형", as: .accessoryRectangular) { IssueWidget() } timeline: { previewEntry; emptyEntry }
 #Preview("AI 이슈 · 한 줄", as: .accessoryInline) { IssueWidget() } timeline: { previewEntry }
 #Preview("코인 · 홈 2×2", as: .systemSmall) { CoinWidget() } timeline: { previewEntry; fourthEntry; emptyEntry }
+// 로고 배경 4종 (미국주식 로고는 위젯이 받아 둔 파일이라 Canvas에서는 기본 배경으로 보인다).
+#Preview("코인 · 홈 2×2 · 로고 배경", as: .systemSmall) { CoinWidget() } timeline: {
+    SnapshotEntry(date: .now, snapshot: .placeholder, background: .watermark)
+    SnapshotEntry(date: .now, snapshot: .placeholder, background: .fill)
+    SnapshotEntry(date: .now, snapshot: .placeholder, background: .color)
+    SnapshotEntry(date: .now, snapshot: .placeholder, background: .blur)
+}
 #Preview("미국주식 · 홈 2×2", as: .systemSmall) { StockWidget() } timeline: { previewEntry; emptyEntry }
 #Preview("환율 · 홈 2×2", as: .systemSmall) { FxWidget() } timeline: { previewEntry; emptyEntry }
 #Preview("자유 구성 · 기본값", as: .systemSmall) { MixWidget() } timeline: { previewEntry; emptyEntry }
