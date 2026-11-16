@@ -1,12 +1,15 @@
 // MarketPeek 시세 서버 진입점: 예약 실행(cron)으로 환율 캐시를 채우고 GET /quotes로 내려준다.
 // GET /issue는 AI 어제 이슈(지금은 예시 문장).
 // 주식 시세는 앱이 한국투자증권 Open API에서 사용자 키로 직접 받는다 (Finnhub는 재배포 금지라 제거).
-import { fetchFx, type FxQuote } from './eximbank';
+import { fetchFx, kstDate, type FxQuote } from './eximbank';
 import { sampleIssue } from './issue';
+import { dashed, fetchCoinMoves, type YesterdayData } from './yesterday';
 
 export interface Env {
   QUOTES: KVNamespace;
   FX_CODES: string;
+  /// AI 어제 이슈 재료로 쓸 코인 (업비트 원화 마켓 심볼).
+  ISSUE_COINS: string;
   EXIM_API_KEY: string;
 }
 
@@ -24,6 +27,11 @@ export default {
     if (req.method !== 'GET') return json({ error: 'method not allowed' }, 405);
     if (url.pathname === '/health') return json({ ok: true });
     if (url.pathname === '/issue') return json(sampleIssue(new Date()));
+    // 이슈 재료 확인용. 요청마다 업비트를 부르므로 로컬(npm run dev)에서만 연다.
+    if (url.pathname === '/issue/data') {
+      if (!isLocal(url)) return json({ error: 'not found' }, 404);
+      return json(await collectYesterday(env, new Date()));
+    }
     if (url.pathname !== '/quotes') return json({ error: 'not found' }, 404);
 
     let fx = await env.QUOTES.get<Cached<FxQuote>>('fx', 'json');
@@ -64,6 +72,28 @@ export async function refresh(env: Env, now: Date): Promise<{ fx: Cached<FxQuote
   }
 
   return { fx };
+}
+
+/// AI 어제 이슈 재료: 어제 주요 코인 등락(업비트) + 캐시된 환율 등락(새로 받지 않음).
+export async function collectYesterday(
+  env: Env,
+  now: Date,
+  fetchFn: typeof fetch = fetch,
+): Promise<YesterdayData> {
+  const [coins, fx] = await Promise.all([
+    fetchCoinMoves(list(env.ISSUE_COINS), now, fetchFn),
+    env.QUOTES.get<Cached<FxQuote>>('fx', 'json'),
+  ]);
+  return {
+    date: dashed(kstDate(now, 1)),
+    coins,
+    fx: fx?.data ?? {},
+    fxUpdatedAt: fx?.updatedAt ?? null,
+  };
+}
+
+function isLocal(url: URL): boolean {
+  return url.hostname === 'localhost' || url.hostname === '127.0.0.1';
 }
 
 function list(csv: string | null | undefined): string[] {

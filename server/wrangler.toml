@@ -17,6 +17,8 @@ id = "ab992677e1c5453883ef5e7eaa2ca8fa"
 [vars]
 # 캐시할 통화. 앱 lib/data/catalog.dart 목록과 맞춘다.
 FX_CODES = "USD,JPY,EUR,THB,CNY"
+# AI 어제 이슈 재료로 어제 등락을 모을 코인 (업비트 원화 마켓).
+ISSUE_COINS = "BTC,ETH,XRP,SOL,DOGE"
 
 # 비밀 키는 여기 적지 않는다. 배포용: npx wrangler secret put EXIM_API_KEY
 # 로컬용: .dev.vars 파일 (git에 올리지 않음, .dev.vars.example 참고)
