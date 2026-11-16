@@ -7,7 +7,7 @@ import CoreImage.CIFilterBuiltins
 struct SnapshotEntry: TimelineEntry {
     let date: Date
     let snapshot: Snapshot?
-    /// 이 위젯이 보여줄 첫 종목의 위치(0부터). "위젯 편집"의 표시 순서에서 온다.
+    /// 이 위젯이 보여줄 첫 종목의 위치(0부터). "위젯 편집"에서 고른 종목의 목록 위치.
     var offset: Int = 0
     /// 코인 사각형(2칸)을 가격 없이 "이름·등락률 2개"로 보여줄지. 코인 위젯 편집에서 고른다.
     var changeOnly: Bool = false
@@ -15,6 +15,8 @@ struct SnapshotEntry: TimelineEntry {
     var selected: [String?] = []
     /// 단일 종목 홈 위젯(2×2)의 배경. 코인·미국주식 위젯 편집에서 고른다.
     var background: LogoBackground = .plain
+    /// 자유 구성 위젯 배경. 자유 구성 위젯 편집에서 고른다.
+    var mixStyle: MixBackground = .plain
 }
 
 extension SnapshotEntry {
@@ -23,6 +25,7 @@ extension SnapshotEntry {
     /// 15분 뒤 다시 불러 달라고 요청한다. 실제로 언제 다시 부를지는 iOS가 정한다(보장 아님).
     static func timeline(parts: (Snapshot) -> Set<QuotePart>, offset: Int = 0, changeOnly: Bool = false,
                          selected: [String?] = [], background: LogoBackground = .plain,
+                         mixStyle: MixBackground = .plain,
                          logos: (Snapshot) -> [String] = { _ in [] }) async -> Timeline<SnapshotEntry> {
         var snap = Snapshot.load()
         if let s = snap {
@@ -35,16 +38,18 @@ extension SnapshotEntry {
         let now = Date()
         let entries = (0..<4).map { i in
             SnapshotEntry(date: now.addingTimeInterval(Double(i) * 15 * 60), snapshot: snap,
-                          offset: offset, changeOnly: changeOnly, selected: selected, background: background)
+                          offset: offset, changeOnly: changeOnly, selected: selected, background: background,
+                          mixStyle: mixStyle)
         }
         return Timeline(entries: entries, policy: .after(now.addingTimeInterval(15 * 60)))
     }
 
     static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false,
-                        selected: [String?] = [], background: LogoBackground = .plain) -> SnapshotEntry {
+                        selected: [String?] = [], background: LogoBackground = .plain,
+                        mixStyle: MixBackground = .plain) -> SnapshotEntry {
         let snap = isPreview ? (Snapshot.load() ?? .placeholder) : Snapshot.load()
         return SnapshotEntry(date: .now, snapshot: snap, offset: offset, changeOnly: changeOnly,
-                             selected: selected, background: background)
+                             selected: selected, background: background, mixStyle: mixStyle)
     }
 }
 
@@ -198,17 +203,25 @@ extension View {
     func trend(_ pct: Double?) -> some View { modifier(TrendEmphasis(pct: pct)) }
 }
 
-/// 위젯 공통 헤더: "코인 ········ 15:30"
+/// 위젯 공통 헤더.
+/// - 홈 화면: 제목 없이 오른쪽에 "최근 업데이트: 15:30"만.
+/// - 잠금화면: "코인 ········ 15:30"
 struct WidgetHeader: View {
     let title: String
     let snapshot: Snapshot
+    @Environment(\.widgetFamily) private var family
+
+    private var isHome: Bool { family == .systemSmall || family == .systemMedium || family == .systemLarge }
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(title).font(.caption2.weight(.semibold))
+            if !isHome {
+                Text(title).font(.caption2.weight(.semibold))
+            }
             Spacer(minLength: 0)
             if snapshot.settings.showUpdatedAt, let t = snapshot.updatedAt {
-                Text(Fmt.hm(t)).font(.caption2).foregroundStyle(.secondary)
+                Text(isHome ? "최근 업데이트: \(Fmt.hm(t))" : Fmt.hm(t))
+                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
         .widgetAccentable()
@@ -322,6 +335,8 @@ struct SmallHomeCard: View {
     let name: String?
     let prices: [String]
     var secondary: String? = nil
+    /// 가격 옆에 작게 붙이는 보조 값 (미국주식 원화). 넓은 것부터, 한 줄에 들어가는 첫 번째를 쓴다.
+    var inlineSecondary: [String] = []
     let change: Double?
     let scheme: String
     /// 기호 왼쪽 아이콘 (코인 로고·주식 로고·국기). nil이면 아이콘 없이.
@@ -345,9 +360,17 @@ struct SmallHomeCard: View {
                 }
             }
             Spacer(minLength: 4)
-            ViewThatFits(in: .horizontal) {
-                ForEach(prices, id: \.self) { priceText($0) }
-                priceText(prices.last ?? "—").minimumScaleFactor(0.6)
+            if let side = inlineSecondary.last {
+                let price = prices.first ?? "—"
+                ViewThatFits(in: .horizontal) {
+                    ForEach(inlineSecondary, id: \.self) { priceLine(price, $0) }
+                    priceLine(price, side).minimumScaleFactor(0.6)
+                }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    ForEach(prices, id: \.self) { priceText($0) }
+                    priceText(prices.last ?? "—").minimumScaleFactor(0.6)
+                }
             }
             if let secondary {
                 Text(secondary).font(.caption).foregroundStyle(.secondary).monospacedDigit()
@@ -367,6 +390,14 @@ struct SmallHomeCard: View {
             .font(.system(size: 19, weight: .semibold))
             .monospacedDigit()
             .trend(change)
+    }
+
+    /// 큰 가격 + 옆에 작은 보조 값 ("$397.45 529,562원").
+    private func priceLine(_ price: String, _ side: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            priceText(price)
+            Text(side).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+        }
     }
 }
 
@@ -475,7 +506,14 @@ struct ItemIcon: View {
         }
     }
 
-    private static let flags = ["USD": "🇺🇸", "JPY": "🇯🇵", "EUR": "🇪🇺", "THB": "🇹🇭", "CNY": "🇨🇳"]
+    /// 앱 Catalog.currencies(수출입은행 고시 22개)와 같은 목록.
+    private static let flags = [
+        "USD": "🇺🇸", "JPY": "🇯🇵", "EUR": "🇪🇺", "CNY": "🇨🇳", "THB": "🇹🇭",
+        "GBP": "🇬🇧", "CHF": "🇨🇭", "CAD": "🇨🇦", "AUD": "🇦🇺", "NZD": "🇳🇿",
+        "HKD": "🇭🇰", "SGD": "🇸🇬", "IDR": "🇮🇩", "MYR": "🇲🇾", "BND": "🇧🇳",
+        "AED": "🇦🇪", "SAR": "🇸🇦", "KWD": "🇰🇼", "BHD": "🇧🇭", "SEK": "🇸🇪",
+        "NOK": "🇳🇴", "DKK": "🇩🇰",
+    ]
 
     @ViewBuilder
     private func image(_ name: String) -> some View {
@@ -585,4 +623,38 @@ struct LogoBackdrop: View {
         let k = min(1, 0.6 / max(r, g, b, 0.001))
         return (r * k, g * k, b * k)
     }
+}
+
+// MARK: - 자유 구성 줄 색
+
+/// 자유 구성 위젯 한 줄의 배경색. 코인·주식은 로고 평균 색(LogoBackdrop.averageColor, 밝기 상한 있음),
+/// 환율은 국기 이모지에서 색을 뽑기 어려워 통화마다 대표 색을 정해 둔다. 로고가 아직 없으면 nil(기본 배경).
+enum ItemTint {
+    static func color(for kind: ItemIcon.Kind) -> Color? {
+        switch kind {
+        case .coin(let symbol):
+            return UIImage(named: "coin-\(symbol)").flatMap(LogoBackdrop.averageColor).map(rgb)
+        case .stock(let id, _):
+            guard let u = StockLogos.fileURL(key: id), let img = UIImage(contentsOfFile: u.path) else { return nil }
+            return LogoBackdrop.averageColor(img).map(rgb)
+        case .flag(let code):
+            return fx[code].map(rgb)
+        case .letter:
+            return nil
+        }
+    }
+
+    private static func rgb(_ c: (Double, Double, Double)) -> Color {
+        Color(red: c.0, green: c.1, blue: c.2)
+    }
+
+    private static let navy = (0.16, 0.24, 0.52), red = (0.58, 0.12, 0.16), green = (0.05, 0.40, 0.22)
+    /// 앱 Catalog.currencies(22개)와 같은 목록. 국기의 주된 색.
+    private static let fx: [String: (Double, Double, Double)] = [
+        "USD": navy, "JPY": red, "EUR": (0.10, 0.22, 0.58), "CNY": red, "THB": navy,
+        "GBP": navy, "CHF": red, "CAD": red, "AUD": navy, "NZD": navy,
+        "HKD": red, "SGD": red, "IDR": red, "MYR": navy, "BND": (0.55, 0.48, 0.08),
+        "AED": green, "SAR": green, "KWD": green, "BHD": red, "SEK": (0.02, 0.32, 0.55),
+        "NOK": red, "DKK": red,
+    ]
 }

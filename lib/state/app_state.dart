@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,8 @@ import '../data/catalog.dart';
 import '../data/kis_quote_repository.dart';
 import '../data/quote_repository.dart';
 import '../models/models.dart';
+import '../util/format.dart';
+import '../widget_bridge/live_activity.dart';
 import '../widget_bridge/widget_sync.dart';
 
 /// 앱 설정과 시세 상태. 변경될 때마다 저장하고 위젯 스냅샷을 다시 쓴다.
@@ -57,12 +60,18 @@ class AppState extends ChangeNotifier {
   QuoteBundle? quotes;
   bool loading = false;
 
+  /// 잠금화면 라이브 액티비티를 켰는지. 켜져 있으면 앱이 화면에 있는 동안 [liveInterval]마다 새로 받는다.
+  bool liveActivityOn = false;
+  static const liveInterval = Duration(seconds: 30);
+  final LiveActivity _live = LiveActivity();
+  Timer? _liveTimer;
+
   /// 잠금화면 직사각형 위젯에 넣을 수 있는 최대 종목 수.
   /// 3개면 위젯이 공간에 따라 제목·갱신 시각 줄을 생략할 수 있다.
   static const maxWidgetRows = 3;
 
   /// 위젯 스냅샷에 담는 코인·미국주식 최대 개수(홈 목록 앞에서부터).
-  /// 위젯마다 "위젯 편집"에서 몇 번째부터 보일지 고른다 — 사각형 2개면 1~3, 4~6번째.
+  /// 위젯마다 "위젯 편집"에서 종목을 고르고, 잠금화면 사각형은 그 종목부터 여러 줄을 보여준다.
   static const maxWidgetItems = 6;
 
   bool get isEmpty =>
@@ -88,9 +97,78 @@ class AppState extends ChangeNotifier {
     _loadCachedCoinList(p);
     kisConnected = await kis?.isConnected ?? false;
     notifyListeners();
+    liveActivityOn = p.getBool('liveActivity') ?? false;
     // 목록을 먼저 받아야 업비트 시세 요청에서 상장폐지 코인을 걸러낼 수 있다.
     await _refreshCoinList(p);
     await refresh();
+    // 8시간이 지나 iOS가 끝냈으면 앱을 열 때 다시 띄운다.
+    if (liveActivityOn && !await _live.isActive()) {
+      await _live.start(_liveRows(), colorScheme.name);
+    }
+    _syncLiveTimer();
+  }
+
+  /// 앱이 백그라운드에서 돌아왔을 때 (main.dart AppLifecycleListener).
+  /// 시세를 새로 받고, 새 설치·8시간 종료 등으로 라이브 액티비티가 사라졌으면 다시 띄운다.
+  /// 처음 켤 때는 [load]가 같은 일을 한다.
+  Future<void> onResume() async {
+    if (_prefs == null) return; // 아직 load 전
+    await refresh();
+    if (liveActivityOn && !await _live.isActive()) {
+      await _live.start(_liveRows(), colorScheme.name);
+    }
+  }
+
+  // ── 잠금화면 라이브 액티비티 ─────────────────────────────
+  /// 켜기에 성공하면 true. 아이폰 설정에서 실시간 현황을 껐으면 false.
+  Future<bool> setLiveActivity(bool on) async {
+    if (on) {
+      liveActivityOn = await _live.start(_liveRows(), colorScheme.name);
+    } else {
+      await _live.end();
+      liveActivityOn = false;
+    }
+    await _prefs?.setBool('liveActivity', liveActivityOn);
+    _syncLiveTimer();
+    notifyListeners();
+    return liveActivityOn;
+  }
+
+  void _syncLiveTimer() {
+    _liveTimer?.cancel();
+    _liveTimer = liveActivityOn ? Timer.periodic(liveInterval, (_) => refresh(pushWidgets: false)) : null;
+  }
+
+  /// 첫 코인 · 첫 미국주식 · USD.
+  List<LiveRow> _liveRows() {
+    final q = quotes;
+    return [
+      if (coinSymbols.isNotEmpty)
+        () {
+          final s = coinSymbols.first;
+          final c = q?.coins[s];
+          return LiveRow(
+              id: 'coin:$s', symbol: s, price: c == null ? '—' : formatKrwShort(c.priceKrw), change: c?.changePct);
+        }(),
+      if (stockTickers.isNotEmpty)
+        () {
+          final t = stockTickers.first;
+          final st = q?.stocks[t];
+          return LiveRow(
+              id: 'stock:$t', symbol: t, price: st == null ? '—' : formatUsd(st.priceUsd), change: st?.changePct);
+        }(),
+      () {
+        final usd = q?.fx['USD'];
+        return LiveRow(
+            id: 'fx:USD', symbol: 'USD', price: usd == null ? '—' : formatFxRate(usd.rateKrw), change: usd?.changePct);
+      }(),
+    ];
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    super.dispose();
   }
 
   void _loadCachedCoinList(SharedPreferences p) {
@@ -122,22 +200,39 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> refresh() async {
+  /// [pushWidgets]가 false면 위젯을 다시 그리지 않는다. 라이브 액티비티 30초 갱신용:
+  /// 위젯을 다시 그리면 위젯도 동시에 KIS를 불러 초당 한도(EGW00201)에 서로 걸린다.
+  Future<void> refresh({bool pushWidgets = true}) async {
     loading = true;
     notifyListeners();
     try {
-      quotes = await _repo.fetch(
+      final fresh = await _repo.fetch(
         coinSymbols: coinSymbols,
         stockTickers: stockTickers,
         krStockCodes: krStockCodes,
         // 환율 선택 화면에서 비교할 수 있게 지원 통화는 모두 받아둔다.
         currencyCodes: [for (final c in Catalog.currencies) c.code],
       );
+      quotes = _keepPrevious(fresh, quotes);
     } finally {
       loading = false;
       notifyListeners();
     }
-    await _pushWidgets();
+    if (pushWidgets) await _pushWidgets();
+    if (liveActivityOn) await _live.update(_liveRows(), colorScheme.name);
+  }
+
+  /// 이번에 못 받은 종목(일시적 실패)은 "—" 대신 직전 값을 유지한다.
+  static QuoteBundle _keepPrevious(QuoteBundle fresh, QuoteBundle? old) {
+    if (old == null) return fresh;
+    return QuoteBundle(
+      coins: {...old.coins, ...fresh.coins},
+      stocks: {...old.stocks, ...fresh.stocks},
+      krStocks: {...old.krStocks, ...fresh.krStocks},
+      fx: {...old.fx, ...fresh.fx},
+      issue: fresh.issue ?? old.issue,
+      fetchedAt: fresh.fetchedAt,
+    );
   }
 
   // ── 코인 목록 ───────────────────────────────────────────

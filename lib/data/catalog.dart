@@ -109,13 +109,41 @@ class Catalog {
     _krByCode = {for (final s in _defaultKrStocks) s.code: s};
   }
 
+  /// 한국수출입은행이 고시하는 통화 22개 (서버 wrangler.toml FX_CODES와 맞춘다).
+  /// JPY·IDR은 100 단위로 고시·표기한다.
   static const currencies = <Currency>[
     Currency(code: 'USD', name: '미국 달러'),
     Currency(code: 'JPY', name: '일본 엔', unit: 100),
     Currency(code: 'EUR', name: '유로'),
-    Currency(code: 'THB', name: '태국 바트'),
     Currency(code: 'CNY', name: '중국 위안'),
+    Currency(code: 'THB', name: '태국 바트'),
+    Currency(code: 'GBP', name: '영국 파운드'),
+    Currency(code: 'CHF', name: '스위스 프랑'),
+    Currency(code: 'CAD', name: '캐나다 달러'),
+    Currency(code: 'AUD', name: '호주 달러'),
+    Currency(code: 'NZD', name: '뉴질랜드 달러'),
+    Currency(code: 'HKD', name: '홍콩 달러'),
+    Currency(code: 'SGD', name: '싱가포르 달러'),
+    Currency(code: 'IDR', name: '인도네시아 루피아', unit: 100),
+    Currency(code: 'MYR', name: '말레이시아 링깃'),
+    Currency(code: 'BND', name: '브루나이 달러'),
+    Currency(code: 'AED', name: '아랍에미리트 디르함'),
+    Currency(code: 'SAR', name: '사우디 리얄'),
+    Currency(code: 'KWD', name: '쿠웨이트 디나르'),
+    Currency(code: 'BHD', name: '바레인 디나르'),
+    Currency(code: 'SEK', name: '스웨덴 크로나'),
+    Currency(code: 'NOK', name: '노르웨이 크로네'),
+    Currency(code: 'DKK', name: '덴마크 크로네'),
   ];
+
+  /// 통화 이름·코드 검색. 빈 검색어면 전체.
+  static List<Currency> searchCurrencies(String q) {
+    final query = q.trim().toLowerCase();
+    if (query.isEmpty) return currencies;
+    return currencies
+        .where((c) => c.code.toLowerCase().contains(query) || c.name.contains(query))
+        .toList();
+  }
 
   /// 목록에 없는 심볼(상장폐지 등)이면 심볼을 이름으로 쓴다.
   static Coin coin(String symbol) => coins.firstWhere((c) => c.symbol == symbol,

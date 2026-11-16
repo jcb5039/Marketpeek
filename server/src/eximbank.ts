@@ -7,8 +7,10 @@ export interface FxQuote {
 }
 
 /// 앱 통화 코드 → 수출입은행 cur_unit. 위안화는 역외 위안(CNH)으로 고시된다.
+/// JPY·IDR은 100 단위로 고시되고 앱도 100 단위로 표기한다(Currency.unit).
 const EXIM_CODE: Record<string, string> = {
   JPY: 'JPY(100)',
+  IDR: 'IDR(100)',
   CNY: 'CNH',
 };
 

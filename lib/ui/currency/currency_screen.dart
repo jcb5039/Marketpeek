@@ -9,12 +9,20 @@ import '../../util/format.dart';
 /// 환율 통화 선택 (여러 개). 첫 번째로 고른 통화가 환율 위젯에 나오고,
 /// 고른 통화 전체를 자유 구성 위젯에서 칸마다 고를 수 있다.
 /// 미국주식 원화 환산은 이 선택과 관계없이 항상 USD/KRW를 쓴다.
-class CurrencyScreen extends StatelessWidget {
+class CurrencyScreen extends StatefulWidget {
   const CurrencyScreen({super.key});
+
+  @override
+  State<CurrencyScreen> createState() => _CurrencyScreenState();
+}
+
+class _CurrencyScreenState extends State<CurrencyScreen> {
+  String _query = '';
 
   @override
   Widget build(BuildContext context) {
     final s = AppScope.of(context);
+    final list = Catalog.searchCurrencies(_query);
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
@@ -42,13 +50,29 @@ class CurrencyScreen extends StatelessWidget {
               style: TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.5),
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: TextField(
+              onChanged: (v) => setState(() => _query = v),
+              decoration: const InputDecoration(
+                hintText: '통화 이름·코드 검색 (예: 파운드, GBP)',
+                prefixIcon: Icon(Icons.search),
+              ),
+            ),
+          ),
+          if (list.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: Text('찾는 통화가 없어요', style: TextStyles.caption)),
+            ),
+          if (list.isNotEmpty)
           Material(
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(12),
             clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
-                for (final (i, c) in Catalog.currencies.indexed) ...[
+                for (final (i, c) in list.indexed) ...[
                   if (i > 0) const Divider(height: 1, indent: 16, endIndent: 16),
                   CheckboxListTile(
                     // 이미 고른 통화를 다시 누르면 빠진다.
