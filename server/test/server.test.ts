@@ -1,8 +1,9 @@
 // 수출입은행 응답 변환과 /quotes 캐시 동작 테스트. 실제 외부 API는 부르지 않는다.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchFx, kstDate } from '../src/eximbank';
-import worker, { refresh, type Env } from '../src/index';
+import worker, { collectYesterday, refresh, type Env } from '../src/index';
 import { sampleIssue } from '../src/issue';
+import { fetchCoinMoves } from '../src/yesterday';
 
 const jsonRes = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -26,6 +27,7 @@ function env(kv = memoryKv()): Env & { QUOTES: ReturnType<typeof memoryKv> } {
   return {
     QUOTES: kv as unknown as KVNamespace & ReturnType<typeof memoryKv>,
     FX_CODES: 'USD,JPY',
+    ISSUE_COINS: 'BTC,ETH,NOPE',
     EXIM_API_KEY: 'ek',
   } as Env & { QUOTES: ReturnType<typeof memoryKv> };
 }
@@ -149,5 +151,56 @@ describe('GET /issue', () => {
   it('GET이 아니면 405', async () => {
     const res = await worker.fetch(new Request('https://x/issue', { method: 'POST' }), env());
     expect(res.status).toBe(405);
+  });
+});
+
+describe('어제 이슈 재료', () => {
+  // KST 2026-11-16 10:00 → 어제는 11-15. 업비트 일봉은 최신순.
+  const now = new Date('2026-11-16T01:00:00Z');
+  const candle = (kstDay: string, price: number, rate: number) => ({
+    candle_date_time_kst: `${kstDay}T09:00:00`,
+    trade_price: price,
+    change_rate: rate,
+  });
+  const upbit = vi.fn(async (url: string) => {
+    const market = new URL(url).searchParams.get('market');
+    if (market === 'KRW-BTC')
+      return jsonRes([candle('2026-11-16', 88_000_000, -0.01), candle('2026-11-15', 89_949_000, 0.0122780166)]);
+    if (market === 'KRW-ETH')
+      return jsonRes([candle('2026-11-16', 4_000_000, 0.003), candle('2026-11-15', 3_990_000, -0.02)]);
+    return jsonRes({ error: { name: 'Code not found' } }, 404);
+  });
+
+  it('코인은 어제 날짜의 일봉을 골라 등락률을 %(소수 둘째 자리)로 바꾸고, 실패한 코인은 뺀다', async () => {
+    const out = await fetchCoinMoves(['BTC', 'ETH', 'NOPE'], now, upbit as unknown as typeof fetch);
+    expect(out).toEqual([
+      { symbol: 'BTC', closeKrw: 89_949_000, changePct: 1.23 },
+      { symbol: 'ETH', closeKrw: 3_990_000, changePct: -2 },
+    ]);
+  });
+
+  it('어제 봉이 응답에 없으면 그 코인은 뺀다', async () => {
+    const onlyToday = async () => jsonRes([candle('2026-11-16', 1, 0)]);
+    const out = await fetchCoinMoves(['BTC'], now, onlyToday as unknown as typeof fetch);
+    expect(out).toEqual([]);
+  });
+
+  it('환율은 캐시 값을 그대로 쓰고 수출입은행은 다시 부르지 않는다', async () => {
+    const e = env();
+    e.QUOTES.store.set(
+      'fx',
+      JSON.stringify({ updatedAt: '2026-11-16T00:30:00Z', data: { USD: { rateKrw: 1430.5, changePct: 0.4 } } }),
+    );
+    const data = await collectYesterday(e, now, upbit as unknown as typeof fetch);
+    expect(data.date).toBe('2026-11-15');
+    expect(data.coins.map((c) => c.symbol)).toEqual(['BTC', 'ETH']);
+    expect(data.fx).toEqual({ USD: { rateKrw: 1430.5, changePct: 0.4 } });
+    expect(data.fxUpdatedAt).toBe('2026-11-16T00:30:00Z');
+    expect(upbit.mock.calls.every(([u]) => String(u).includes('api.upbit.com'))).toBe(true);
+  });
+
+  it('/issue/data는 배포 주소에서는 404', async () => {
+    const res = await worker.fetch(new Request('https://marketpeek-api.example.workers.dev/issue/data'), env());
+    expect(res.status).toBe(404);
   });
 });
