@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -16,25 +17,35 @@ struct SnapshotEntry: TimelineEntry {
 
 extension SnapshotEntry {
     /// 앱이 써둔 스냅샷(종목 목록·설정)을 읽고, [parts] 시세를 직접 받아 덮어쓴 뒤 엔트리를 만든다.
-    /// 미국장 상태는 시각에 따라 바뀌므로 15분 간격 엔트리를 1시간치 만들고,
-    /// 15분 뒤 다시 불러 달라고 요청한다. 실제로 언제 다시 부를지는 iOS가 정한다(보장 아님).
-    static func timeline(parts: (Snapshot) -> Set<QuotePart>, offset: Int = 0, changeOnly: Bool = false,
+    /// 엔트리는 시세를 다시 받지 않고 같은 값을 시각만 바꿔 그린다. 처음 1시간은 1분 간격이라
+    /// "N분 전"·미국장 상태가 저절로 바뀌고, 그 뒤 6시간까지는 10분 간격이다.
+    /// 다시 받아 달라는 시점은 [ReloadPlan]이 정하지만, 실제로 언제 부를지는 iOS가 정한다(보장 아님).
+    /// [markets]: 이 위젯이 보여주는 주식 시장. 장중인지에 따라 다시 받을 시점이 달라진다.
+    static func timeline(parts: (Snapshot) -> Set<QuotePart>,
+                         markets: (Snapshot) -> Set<StockMarket> = { _ in [.us, .kr] },
+                         offset: Int = 0, changeOnly: Bool = false,
                          selected: [String?] = [],
                          logos: (Snapshot) -> [String] = { _ in [] }) async -> Timeline<SnapshotEntry> {
         var snap = Snapshot.load()
+        var wanted: Set<QuotePart> = []
+        var stockMarkets: Set<StockMarket> = []
         if let s = snap {
+            wanted = parts(s)
+            stockMarkets = markets(s)
             // 주식 로고(자유 구성)는 시세와 동시에 받는다. 둘 다 끝난 뒤 엔트리를 만든다.
             let logoIds = logos(s)
             async let logoDone: Void = StockLogos.prefetch(itemIds: logoIds)
-            snap = await LiveQuotes.refresh(s, parts: parts(s))
+            snap = await LiveQuotes.refresh(s, parts: wanted)
             await logoDone
         }
         let now = Date()
-        let entries = (0..<4).map { i in
-            SnapshotEntry(date: now.addingTimeInterval(Double(i) * 15 * 60), snapshot: snap,
+        let minutes = Array(0..<60) + Array(stride(from: 60, to: 360, by: 10))
+        let entries = minutes.map { m in
+            SnapshotEntry(date: now.addingTimeInterval(Double(m) * 60), snapshot: snap,
                           offset: offset, changeOnly: changeOnly, selected: selected)
         }
-        return Timeline(entries: entries, policy: .after(now.addingTimeInterval(15 * 60)))
+        let after = ReloadPlan.interval(parts: wanted, markets: stockMarkets, now: now)
+        return Timeline(entries: entries, policy: .after(now.addingTimeInterval(after)))
     }
 
     static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false,
@@ -64,6 +75,44 @@ struct SnapshotProvider: TimelineProvider {
     }
 }
 
+/// 다음 타임라인을 언제 다시 받아 달라고 요청할지. iOS는 위젯마다 하루 갱신 횟수를 제한하므로
+/// 값이 거의 안 바뀌는 때(장 마감, 환율 고시 사이, 하루 1번인 AI 이슈)에는 덜 요청해 장중에 횟수를 남긴다.
+/// 실제로 언제 부를지는 iOS가 정한다.
+enum ReloadPlan {
+    static let often: TimeInterval = 15 * 60
+    static let rarely: TimeInterval = 60 * 60
+    static let issue: TimeInterval = 2 * 60 * 60
+
+    static func interval(parts: Set<QuotePart>, markets: Set<StockMarket>, now: Date) -> TimeInterval {
+        // 앱 스냅샷이 아직 없으면(parts 비어 있음) 앱을 연 뒤 빨리 보이도록 자주.
+        if parts.isEmpty || parts.contains(.coins) { return often }  // 코인은 24시간 거래
+        var best = parts.contains(.fx) ? rarely : issue  // 환율: 서버가 1시간마다 갱신
+        if parts.contains(.stocks) { best = min(best, stockInterval(markets, now: now)) }
+        return best
+    }
+
+    /// 장중이면 15분. 닫혀 있으면 1시간이되, 그 안에 장이 열리면 열린 직후로 당긴다(15분 단위).
+    static func stockInterval(_ markets: Set<StockMarket>, now: Date) -> TimeInterval {
+        for step in 0...3 {
+            let t = Double(step) * often
+            if markets.contains(where: { MarketHours.isOpen($0, at: now.addingTimeInterval(t)) }) {
+                return max(t, often)
+            }
+        }
+        return rarely
+    }
+}
+
+/// 홈 화면 위젯의 새로고침 버튼(↻). 버튼을 누르면 iOS가 그 위젯의 타임라인을 다시 만들어
+/// 앱을 열지 않고 시세를 새로 받는다. 할 일은 없고, 다시 만드는 건 WidgetKit이 한다.
+/// 60초 안에 다시 누르면 같은 요청을 재사용(LiveQuotes Reuse)해 값이 그대로일 수 있다.
+struct RefreshQuotesIntent: AppIntent {
+    static let title: LocalizedStringResource = "시세 새로고침"
+    static let isDiscoverable = false
+
+    func perform() async throws -> some IntentResult { .result() }
+}
+
 // MARK: - Formatting
 
 enum Fmt {
@@ -91,6 +140,16 @@ enum Fmt {
         f.locale = Locale(identifier: "ko_KR")
         f.dateFormat = "HH:mm"
         return f.string(from: date)
+    }
+
+    /// 마지막 갱신이 [now] 기준 얼마 전인지: "방금", "12분 전", "3시간 전", "2일 전".
+    /// 엔트리 시각을 [now]로 넘기므로 위젯이 시세를 다시 받지 않아도 엔트리마다 늘어난다.
+    static func ago(_ date: Date, now: Date) -> String {
+        let minutes = max(0, Int(now.timeIntervalSince(date) / 60))
+        if minutes < 1 { return "방금" }
+        if minutes < 60 { return "\(minutes)분 전" }
+        if minutes < 24 * 60 { return "\(minutes / 60)시간 전" }
+        return "\(minutes / (24 * 60))일 전"
     }
 
     static func color(_ pct: Double?, scheme: String) -> Color {
@@ -195,19 +254,31 @@ extension View {
     func trend(_ pct: Double?) -> some View { modifier(TrendEmphasis(pct: pct)) }
 }
 
-/// 위젯 공통 헤더: "코인 ········ 15:30"
+/// 위젯 공통 헤더: "코인 ········ 3분 전" (홈 화면 2×2는 끝에 새로고침 버튼 ↻)
 struct WidgetHeader: View {
     let title: String
     let snapshot: Snapshot
+    /// 엔트리 시각. "N분 전"을 이 시각 기준으로 계산한다.
+    let now: Date
+    @Environment(\.widgetFamily) private var family
 
     var body: some View {
         HStack(spacing: 4) {
             Text(title).font(.caption2.weight(.semibold))
             Spacer(minLength: 0)
             if snapshot.settings.showUpdatedAt, let t = snapshot.updatedAt {
-                Text(Fmt.hm(t)).font(.caption2).foregroundStyle(.secondary)
+                Text(Fmt.ago(t, now: now)).font(.caption2).foregroundStyle(.secondary)
+            }
+            // 잠금화면 위젯은 누르면 앱이 열리므로 홈 화면에만 단다.
+            if family == .systemSmall {
+                Button(intent: RefreshQuotesIntent()) {
+                    Image(systemName: "arrow.clockwise").font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
             }
         }
+        .lineLimit(1)
         .widgetAccentable()
     }
 }
@@ -315,6 +386,7 @@ struct ChangeOnlyRows: View {
 struct SmallHomeCard: View {
     let title: String
     let snapshot: Snapshot
+    let now: Date
     let symbol: String
     let name: String?
     let prices: [String]
@@ -326,7 +398,7 @@ struct SmallHomeCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WidgetHeader(title: title, snapshot: snapshot)
+            WidgetHeader(title: title, snapshot: snapshot, now: now)
             Spacer(minLength: 4)
             HStack(alignment: .center, spacing: 6) {
                 if let icon {

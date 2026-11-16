@@ -49,7 +49,7 @@ struct CoinWidgetView: View {
             case .accessoryCircular:
                 SmallSquareQuote(item: .init(symbol: c.symbol, change: c.change), scheme: scheme)
             case .systemSmall:
-                SmallHomeCard(title: "코인", snapshot: snap, symbol: c.symbol, name: c.name,
+                SmallHomeCard(title: "코인", snapshot: snap, now: entry.date, symbol: c.symbol, name: c.name,
                               prices: [c.price, Fmt.dropWon(c.price), c.priceShort].compactMap { $0 },
                               change: c.change, scheme: scheme, icon: .coin(c.symbol))
             default:
@@ -60,7 +60,7 @@ struct CoinWidgetView: View {
                     )
                 } else {
                     HeaderedRows {
-                        WidgetHeader(title: "코인", snapshot: snap)
+                        WidgetHeader(title: "코인", snapshot: snap, now: entry.date)
                     } rows: {
                         PriceGrid(variants: [
                             // 1) 100,000,000원  2) 100,000,000  3) 1억
@@ -116,14 +116,14 @@ struct StockWidgetView: View {
             case .accessoryCircular:
                 CircularQuote(symbol: st.ticker, change: st.change, scheme: s.colorScheme)
             case .systemSmall:
-                SmallHomeCard(title: title, snapshot: snap, symbol: st.ticker, name: st.name,
+                SmallHomeCard(title: title, snapshot: snap, now: entry.date, symbol: st.ticker, name: st.name,
                               prices: [st.priceUsd ?? "—"],
                               secondary: s.showStockKrw ? (st.priceKrw ?? st.priceKrwShort) : nil,
                               change: st.change, scheme: s.colorScheme,
                               icon: .stock(id: "us-\(st.ticker)", letter: st.ticker))
             default:
                 HeaderedRows {
-                    WidgetHeader(title: title, snapshot: snap)
+                    WidgetHeader(title: title, snapshot: snap, now: entry.date)
                 } rows: {
                     if rows.count == 1 {
                         single(st, s)
@@ -207,12 +207,12 @@ struct FxWidgetView: View {
                     .padding(.horizontal, 3)
                 }
             case .systemSmall:
-                SmallHomeCard(title: "환율", snapshot: snap, symbol: pair, name: fx.name,
+                SmallHomeCard(title: "환율", snapshot: snap, now: entry.date, symbol: pair, name: fx.name,
                               prices: [fx.rate, Fmt.dropWon(fx.rate)].compactMap { $0 },
                               change: fx.change, scheme: scheme, icon: .flag(fx.code))
             default:
                 VStack(alignment: .leading, spacing: 1) {
-                    WidgetHeader(title: "환율 · \(pair)", snapshot: snap)
+                    WidgetHeader(title: "환율 · \(pair)", snapshot: snap, now: entry.date)
                     Text(fx.rate ?? "—")
                         .font(.headline)
                         .trend(fx.change)
@@ -380,7 +380,7 @@ struct MixWidgetView: View {
                 // 세로가 모자라면 제목 줄을 빼고 항목만 보여준다.
                 ViewThatFits(in: .vertical) {
                     VStack(alignment: .leading, spacing: 6) {
-                        WidgetHeader(title: "자유 구성", snapshot: snap)
+                        WidgetHeader(title: "자유 구성", snapshot: snap, now: entry.date)
                         rows(items, scheme)
                     }
                     rows(items, scheme)
