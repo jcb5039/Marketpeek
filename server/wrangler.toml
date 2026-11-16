@@ -16,7 +16,7 @@ id = "ab992677e1c5453883ef5e7eaa2ca8fa"
 
 [vars]
 # 캐시할 통화. 앱 lib/data/catalog.dart 목록과 맞춘다.
-FX_CODES = "USD,JPY,EUR,THB,CNY"
+FX_CODES = "USD,JPY,EUR,CNY,THB,GBP,CHF,CAD,AUD,NZD,HKD,SGD,IDR,MYR,BND,AED,SAR,KWD,BHD,SEK,NOK,DKK"
 # AI 어제 이슈 재료로 어제 등락을 모을 코인 (업비트 원화 마켓).
 ISSUE_COINS = "BTC,ETH,XRP,SOL,DOGE"
 

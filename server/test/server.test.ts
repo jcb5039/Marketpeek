@@ -41,10 +41,12 @@ describe('fetchFx', () => {
     '20261106': [
       { result: 1, cur_unit: 'USD', deal_bas_r: '1,430.5' },
       { result: 1, cur_unit: 'JPY(100)', deal_bas_r: '950' },
+      { result: 1, cur_unit: 'IDR(100)', deal_bas_r: '8.69' },
     ],
     '20261105': [
       { result: 1, cur_unit: 'USD', deal_bas_r: '1,425' },
       { result: 1, cur_unit: 'JPY(100)', deal_bas_r: '952' },
+      { result: 1, cur_unit: 'IDR(100)', deal_bas_r: '8.71' },
     ],
   };
   const fetchFn = vi.fn(async (url: string) => {
@@ -58,6 +60,12 @@ describe('fetchFx', () => {
     expect(out.USD.changePct).toBeCloseTo(((1430.5 - 1425) / 1425) * 100, 9);
     expect(out.JPY.rateKrw).toBe(950);
     expect(out.EUR).toBeUndefined();
+  });
+
+  it('IDR은 100루피아 기준(IDR(100))으로 매핑한다', async () => {
+    const out = await fetchFx(['IDR'], 'ek', now, fetchFn as unknown as typeof fetch);
+    expect(out.IDR.rateKrw).toBe(8.69);
+    expect(out.IDR.changePct).toBeCloseTo(((8.69 - 8.71) / 8.71) * 100, 9);
   });
 
   it('인증 오류(result 3)면 예외', async () => {

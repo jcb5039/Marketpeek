@@ -48,6 +48,20 @@ class SettingsScreen extends StatelessWidget {
               onChanged: (v) => s.updateSettings(showUpdatedAt: v),
             ),
           ]),
+          const _Header('잠금화면 실시간 현황'),
+          _Group(children: [
+            _Check(
+              title: '잠금화면에 첫 코인·첫 미국주식·USD 띄우기 (앱이 켜져 있을 때 30초마다 갱신)',
+              value: s.liveActivityOn,
+              onChanged: (v) async {
+                final ok = await s.setLiveActivity(v);
+                if (v && !ok && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('켜지 못했어요. 아이폰 설정 → Marketpeek → 실시간 현황을 켜 주세요')));
+                }
+              },
+            ),
+          ]),
           if (s.kis != null) ...[
             const _Header('증권사 연결'),
             _Group(children: [
@@ -163,7 +177,7 @@ class _CountTile extends StatelessWidget {
       subtitle: Text(
         value == AppState.maxWidgetRows
             ? '3개면 제목·갱신 시각 줄이 빠질 수 있어요'
-            : '홈 목록 ${AppState.maxWidgetItems}번째까지 위젯에 넣을 수 있어요. 위젯 편집에서 몇 번째부터 보일지 골라요',
+            : '홈 목록 ${AppState.maxWidgetItems}번째까지 위젯에 넣을 수 있어요. 위젯 편집에서 종목을 골라요',
         style: TextStyles.caption,
       ),
       trailing: SegmentedButton<int>(
