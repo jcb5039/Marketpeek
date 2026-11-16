@@ -1,5 +1,6 @@
 import SwiftUI
 import WidgetKit
+import ActivityKit
 
 // kind 문자열은 lib/widget_bridge/widget_sync.dart의 widgetKinds와 일치해야 한다.
 //
@@ -11,7 +12,7 @@ import WidgetKit
 //    자유 구성(MixWidget)은 2×2 전용: 칸 3개에 코인·주식·환율을 섞어서 고른다(Position.swift).
 //  iOS 잠금화면 시계 아래는 4칸이 한도: 직사각형 2개 / 직사각형 1 + 원형 2 / 원형 4.
 //
-// 코인·미국주식은 "위젯 편집"으로 몇 번째 종목부터 보일지 고른다(Position.swift).
+// 코인·미국주식은 "위젯 편집"에서 보여줄 종목을 이름으로 고른다(Position.swift).
 // 위젯 확장은 iOS 17+ (AppIntentConfiguration). 앱 본체는 16.0부터 설치된다.
 
 /// 위젯 편집 순서가 가리키는 종목이 없을 때의 안내.
@@ -29,7 +30,7 @@ struct CoinWidget: Widget {
             CoinWidgetView(entry: entry).widgetBackground(squareSmall: true, backdrop: .coin(entry))
         }
         .configurationDisplayName("코인")
-        .description("고른 코인의 원화 가격과 등락률. 길게 눌러 몇 번째 코인부터 보일지, 배경을 어떻게 할지 고를 수 있어요.")
+        .description("고른 코인의 원화 가격과 등락률. 길게 눌러 코인과 배경을 고를 수 있어요.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
     }
 }
@@ -87,7 +88,7 @@ struct StockWidget: Widget {
             StockWidgetView(entry: entry).widgetBackground(backdrop: .stock(entry))
         }
         .configurationDisplayName("미국주식")
-        .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 몇 번째 종목부터 보일지, 배경을 어떻게 할지 고를 수 있어요.")
+        .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 종목과 배경을 고를 수 있어요.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
     }
 }
@@ -118,7 +119,8 @@ struct StockWidgetView: View {
             case .systemSmall:
                 SmallHomeCard(title: title, snapshot: snap, now: entry.date, symbol: st.ticker, name: st.name,
                               prices: [st.priceUsd ?? "—"],
-                              secondary: s.showStockKrw ? (st.priceKrw ?? st.priceKrwShort) : nil,
+                              // 원화는 달러 옆에 (들어가면 전체, 아니면 "53만"). 원화 환율이 없으면 달러만.
+                              inlineSecondary: s.showStockKrw ? [st.priceKrw, st.priceKrwShort].compactMap { $0 } : [],
                               change: st.change, scheme: s.colorScheme,
                               icon: .stock(id: "us-\(st.ticker)", letter: st.ticker))
             default:
@@ -297,6 +299,7 @@ struct MarketPeekWidgetBundle: WidgetBundle {
         FxWidget()
         IssueWidget()
         MixWidget()
+        MarketLiveActivity()
     }
 }
 
@@ -322,6 +325,8 @@ struct MixItem: Hashable {
     var change: Double?
     var missing = false
     var icon: ItemIcon.Kind = .letter("")
+    /// 가격 줄 후보 (넓은 것부터). 미국주식은 "$397.45 · 529,562원" → "$397.45 · 53만". 비면 [price].
+    var priceVariants: [String] = []
 
     static func resolve(_ id: String, in s: Snapshot) -> MixItem {
         let parts = id.split(separator: ":", maxSplits: 1).map(String.init)
@@ -341,8 +346,12 @@ struct MixItem: Hashable {
             }
         case "stock":
             if let st = s.stocks.first(where: { $0.ticker == key }) {
+                // 원화는 달러 옆에. 앱 설정에서 원화 표시를 껐거나 원화 환율이 없으면 달러만.
+                let krw = s.settings.showStockKrw && st.priceUsd != nil
+                    ? [st.priceKrw, st.priceKrwShort].compactMap { $0 } : []
                 return MixItem(symbol: st.ticker, price: st.priceUsd ?? noPrice, change: st.change,
-                               icon: .stock(id: "us-\(st.ticker)", letter: st.ticker))
+                               icon: .stock(id: "us-\(st.ticker)", letter: st.ticker),
+                               priceVariants: krw.map { "\(st.priceUsd!) · \($0)" })
             }
         case "fx":
             let fxs = s.fxList ?? (s.fx.map { [$0] } ?? [])
@@ -376,14 +385,31 @@ struct MixWidgetView: View {
             let scheme = snap.settings.colorScheme
             if items.isEmpty {
                 EmptyHint(title: "자유 구성", message: "앱에서 코인·종목·환율을 추가하세요")
+            } else if entry.mixStyle != .plain {
+                // 줄마다 색: 줄 여백 때문에 제목 줄은 빼고, 갱신 시각은 맨 아래에 작게 둔다.
+                VStack(alignment: .leading, spacing: 4) {
+                    rows(items, scheme, entry.mixStyle)
+                    Spacer(minLength: 0)
+                    HStack(spacing: 4) {
+                        Spacer(minLength: 0)
+                        if snap.settings.showUpdatedAt, let t = snap.updatedAt {
+                            Text("최근 업데이트: \(Fmt.hm(t))")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        RefreshButton()
+                    }
+                    .widgetAccentable()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 // 세로가 모자라면 제목 줄을 빼고 항목만 보여준다.
                 ViewThatFits(in: .vertical) {
                     VStack(alignment: .leading, spacing: 6) {
                         WidgetHeader(title: "자유 구성", snapshot: snap, now: entry.date)
-                        rows(items, scheme)
+                        rows(items, scheme, entry.mixStyle)
                     }
-                    rows(items, scheme)
+                    rows(items, scheme, entry.mixStyle)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
@@ -392,9 +418,36 @@ struct MixWidgetView: View {
         }
     }
 
-    private func rows(_ items: [MixItem], _ scheme: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+    private func rows(_ items: [MixItem], _ scheme: String, _ style: MixBackground) -> some View {
+        let tinted = style != .plain
+        return VStack(alignment: .leading, spacing: tinted ? 3 : 5) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                row(item, scheme)
+                    // 줄마다 색: 로고·국기 색을 옅게 깔고, 글자 위치는 제목 줄과 맞춘다(바깥 -6 / 안쪽 +6).
+                    .padding(.horizontal, tinted ? 6 : 0)
+                    .padding(.vertical, tinted ? 3 : 0)
+                    .background {
+                        if tinted, let c = ItemTint.color(for: item.icon) {
+                            let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            if style == .rowCard {
+                                // 옅은 회색 상자 + 로고·국기 색 테두리.
+                                shape.fill(Color.white.opacity(0.08))
+                                    .overlay(shape.strokeBorder(c.opacity(0.9), lineWidth: 1.5))
+                            } else if style == .rowFade {
+                                // 로고 쪽(왼쪽)은 진하게, 오른쪽으로 갈수록 투명하게.
+                                shape.fill(LinearGradient(colors: [c.opacity(0.8), c.opacity(0)],
+                                                          startPoint: .leading, endPoint: .trailing))
+                            } else {
+                                shape.fill(c.opacity(0.55))
+                            }
+                        }
+                    }
+            }
+        }
+        .padding(.horizontal, tinted ? -6 : 0)
+    }
+
+    private func row(_ item: MixItem, _ scheme: String) -> some View {
                 HStack(alignment: .center, spacing: 6) {
                     ItemIcon(kind: item.icon, size: 20)
                     VStack(alignment: .leading, spacing: 0) {
@@ -407,15 +460,131 @@ struct MixWidgetView: View {
                                 .monospacedDigit()
                                 .layoutPriority(1)
                         }
-                        Text(item.price)
-                            .font(.system(size: 12))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .minimumScaleFactor(0.7)
+                        let lines = item.priceVariants.isEmpty ? [item.price] : item.priceVariants
+                        ViewThatFits(in: .horizontal) {
+                            ForEach(lines, id: \.self) { priceLine($0) }
+                            priceLine(lines.last ?? item.price).minimumScaleFactor(0.7)
+                        }
                     }
                 }
                 .lineLimit(1)
+    }
+
+    private func priceLine(_ s: String) -> some View {
+        Text(s)
+            .font(.system(size: 12))
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+    }
+}
+
+// MARK: - 라이브 액티비티 (잠금화면·다이내믹 아일랜드)
+// 앱(Runner/AppDelegate.swift LiveActivityController)이 시작·갱신한다. 푸시를 쓰지 않으므로
+// 앱이 켜져 있을 때만 값이 바뀌고, 15분 넘게 안 바뀌면 오래된 값 안내를 붙인다.
+
+/// Runner/AppDelegate.swift의 같은 이름 struct와 이름·필드가 같아야 한다 (한쪽을 바꾸면 다른 쪽도).
+struct MarketActivityAttributes: ActivityAttributes {
+    struct Row: Codable, Hashable {
+        /// "coin:BTC", "stock:TSLA", "fx:USD" (아이콘 고르기용)
+        var id: String
+        var symbol: String
+        var price: String
+        var change: Double?
+    }
+
+    struct ContentState: Codable, Hashable {
+        var rows: [Row]
+        /// "korean" | "global" (상승·하락 색)
+        var scheme: String
+        var updatedAt: Date
+    }
+}
+
+struct MarketLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: MarketActivityAttributes.self) { context in
+            LiveLockView(state: context.state, stale: context.isStale)
+                .padding(16)
+                .environment(\.colorScheme, .dark)
+                .activityBackgroundTint(Color.black.opacity(0.75))
+                .activitySystemActionForegroundColor(.white)
+        } dynamicIsland: { context in
+            let s = context.state
+            let first = s.rows.first
+            return DynamicIsland {
+                DynamicIslandExpandedRegion(.bottom) {
+                    LiveRows(state: s)
+                }
+            } compactLeading: {
+                Text(first?.symbol ?? "—").font(.caption2.weight(.bold))
+            } compactTrailing: {
+                ChangeText(pct: first?.change, scheme: s.scheme)
+                    .font(.caption2.weight(.semibold)).monospacedDigit()
+            } minimal: {
+                Text(first.map { String($0.symbol.prefix(3)) } ?? "—").font(.caption2.weight(.bold))
             }
+        }
+    }
+}
+
+/// 잠금화면: 3종목 가로 + 맨 아래 갱신 시각.
+struct LiveLockView: View {
+    let state: MarketActivityAttributes.ContentState
+    let stale: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LiveRows(state: state)
+            HStack {
+                Spacer(minLength: 0)
+                Text("최근 업데이트: \(Self.hms(state.updatedAt))" + (stale ? " · 앱을 열면 갱신돼요" : ""))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    static func hms(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.dateFormat = "HH:mm:ss"
+        return f.string(from: date)
+    }
+}
+
+/// 종목 칸 가로 배치: 아이콘·이름 / 가격 / 등락률.
+struct LiveRows: View {
+    let state: MarketActivityAttributes.ContentState
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ForEach(Array(state.rows.enumerated()), id: \.offset) { _, r in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        ItemIcon(kind: Self.icon(r), size: 16)
+                        Text(r.symbol).font(.caption.weight(.bold))
+                            .minimumScaleFactor(0.7)
+                    }
+                    Text(r.price).font(.subheadline.weight(.semibold)).monospacedDigit()
+                        .minimumScaleFactor(0.6)
+                    ChangeText(pct: r.change, scheme: state.scheme)
+                        .font(.caption.weight(.semibold)).monospacedDigit()
+                }
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    static func icon(_ r: MarketActivityAttributes.Row) -> ItemIcon.Kind {
+        let parts = r.id.split(separator: ":", maxSplits: 1).map(String.init)
+        let key = parts.count > 1 ? parts[1] : r.symbol
+        switch parts.first ?? "" {
+        case "coin": return .coin(key)
+        case "stock": return .stock(id: "us-\(key)", letter: r.symbol)
+        case "kr": return .stock(id: "kr-\(key)", letter: r.symbol)
+        case "fx": return .flag(key)
+        default: return .letter(r.symbol)
         }
     }
 }

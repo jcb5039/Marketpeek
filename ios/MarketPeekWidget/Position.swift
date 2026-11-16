@@ -1,4 +1,4 @@
-// 코인·미국주식 위젯의 "위젯 편집" 설정: 몇 번째 종목부터 보여줄지(공통), 코인은 표시 정보도 고른다.
+// 코인·미국주식 위젯의 "위젯 편집" 설정: 보여줄 종목을 이름으로 고른다(공통), 코인은 표시 정보도 고른다.
 // 홈 화면 2×2에서는 배경(종목 로고)도 고른다.
 import AppIntents
 import WidgetKit
@@ -18,29 +18,83 @@ enum LogoBackground: String, AppEnum {
     ]
 }
 
-/// 표시 순서. 스냅샷에는 홈 목록 앞 6개까지 담긴다(Dart AppState.maxWidgetItems).
-enum ListPosition: Int, AppEnum {
-    case p1 = 1, p2, p3, p4, p5, p6
+// MARK: - 종목 고르기 (이름으로)
+// 후보는 앱이 써둔 스냅샷의 홈 목록(앞 6개, Dart AppState.maxWidgetItems)이다.
+// 고른 종목이 목록에서 몇 번째인지를 offset으로 바꿔 쓴다. 잠금화면 사각형은 그 종목부터 여러 줄을 보여준다.
+// 고른 종목이 목록에서 빠졌거나 아직 안 골랐으면 첫 종목.
 
-    static let typeDisplayRepresentation: TypeDisplayRepresentation = "표시 순서"
-    static let caseDisplayRepresentations: [ListPosition: DisplayRepresentation] = [
-        .p1: "1번째부터", .p2: "2번째부터", .p3: "3번째부터",
-        .p4: "4번째부터", .p5: "5번째부터", .p6: "6번째부터",
-    ]
+struct StockPick: AppEntity {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "종목"
+    static let defaultQuery = StockPickQuery()
+
+    /// 티커 ("TSLA")
+    let id: String
+    let name: String
+
+    var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: "\(name)", subtitle: "\(id)")
+    }
+}
+
+struct StockPickQuery: EntityQuery {
+    func entities(for identifiers: [String]) async throws -> [StockPick] {
+        let all = Self.all()
+        return identifiers.map { id in all.first { $0.id == id } ?? StockPick(id: id, name: id) }
+    }
+
+    func suggestedEntities() async throws -> [StockPick] { Self.all() }
+
+    static func all() -> [StockPick] {
+        (Snapshot.load()?.stocks ?? []).map { StockPick(id: $0.ticker, name: $0.name) }
+    }
+}
+
+struct CoinPick: AppEntity {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "코인"
+    static let defaultQuery = CoinPickQuery()
+
+    /// 심볼 ("BTC")
+    let id: String
+    let name: String
+
+    var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: "\(name)", subtitle: "\(id)")
+    }
+}
+
+struct CoinPickQuery: EntityQuery {
+    func entities(for identifiers: [String]) async throws -> [CoinPick] {
+        let all = Self.all()
+        return identifiers.map { id in all.first { $0.id == id } ?? CoinPick(id: id, name: id) }
+    }
+
+    func suggestedEntities() async throws -> [CoinPick] { Self.all() }
+
+    static func all() -> [CoinPick] {
+        (Snapshot.load()?.coins ?? []).map { CoinPick(id: $0.symbol, name: $0.name) }
+    }
+}
+
+/// 고른 id가 목록에서 몇 번째인지 (없으면 0 = 첫 종목).
+private func listOffset(of id: String?, in ids: [String]) -> Int {
+    id.flatMap { ids.firstIndex(of: $0) } ?? 0
 }
 
 struct ListPositionIntent: WidgetConfigurationIntent {
-    static let title: LocalizedStringResource = "표시 순서"
-    static let description = IntentDescription("홈 목록에서 몇 번째 종목부터 이 위젯에 보여줄지 골라요. 배경은 홈 화면 2×2에만 적용돼요.")
+    static let title: LocalizedStringResource = "미국주식 위젯"
+    static let description = IntentDescription("보여줄 종목과 배경을 골라요. 배경은 홈 화면 2×2에만 적용돼요.")
 
-    @Parameter(title: "표시 순서", default: .p1)
-    var start: ListPosition
+    @Parameter(title: "종목 선택")
+    var stock: StockPick?
 
-    @Parameter(title: "배경", default: .watermark)
+    @Parameter(title: "배경 선택", default: .watermark)
     var background: LogoBackground
 
     init() {}
-    init(start: ListPosition) { self.start = start }
+
+    var offset: Int {
+        listOffset(of: stock?.id, in: (Snapshot.load()?.stocks ?? []).map(\.ticker))
+    }
 }
 
 struct PositionProvider: AppIntentTimelineProvider {
@@ -49,12 +103,12 @@ struct PositionProvider: AppIntentTimelineProvider {
     }
 
     func snapshot(for configuration: ListPositionIntent, in context: Context) async -> SnapshotEntry {
-        .current(isPreview: context.isPreview, offset: configuration.start.rawValue - 1,
+        .current(isPreview: context.isPreview, offset: configuration.offset,
                  background: configuration.background)
     }
 
     func timeline(for configuration: ListPositionIntent, in context: Context) async -> Timeline<SnapshotEntry> {
-        let offset = configuration.start.rawValue - 1
+        let offset = configuration.offset
         // 홈 화면 2×2만 로고를 보여주므로 그때만 받는다.
         let wantsLogo = context.family == .systemSmall
         return await SnapshotEntry.timeline(parts: { _ in [.stocks] }, markets: { _ in [.us] },
@@ -80,18 +134,22 @@ enum CoinDisplayStyle: String, AppEnum {
 
 struct CoinWidgetIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "코인 위젯"
-    static let description = IntentDescription("몇 번째 코인부터, 어떤 정보를 보여줄지 골라요. 표시 정보는 사각형 위젯에만, 배경은 홈 화면 2×2에만 적용돼요.")
+    static let description = IntentDescription("보여줄 코인과 정보, 배경을 골라요. 표시 정보는 사각형 위젯에만, 배경은 홈 화면 2×2에만 적용돼요.")
 
-    @Parameter(title: "표시 순서", default: .p1)
-    var start: ListPosition
+    @Parameter(title: "코인 선택")
+    var coin: CoinPick?
 
     @Parameter(title: "표시 정보", default: .prices)
     var style: CoinDisplayStyle
 
-    @Parameter(title: "배경", default: .watermark)
+    @Parameter(title: "배경 선택", default: .watermark)
     var background: LogoBackground
 
     init() {}
+
+    var offset: Int {
+        listOffset(of: coin?.id, in: (Snapshot.load()?.coins ?? []).map(\.symbol))
+    }
 }
 
 struct CoinProvider: AppIntentTimelineProvider {
@@ -100,12 +158,12 @@ struct CoinProvider: AppIntentTimelineProvider {
     }
 
     func snapshot(for configuration: CoinWidgetIntent, in context: Context) async -> SnapshotEntry {
-        .current(isPreview: context.isPreview, offset: configuration.start.rawValue - 1,
+        .current(isPreview: context.isPreview, offset: configuration.offset,
                  changeOnly: configuration.style == .changeOnly, background: configuration.background)
     }
 
     func timeline(for configuration: CoinWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
-        await SnapshotEntry.timeline(parts: { _ in [.coins] }, offset: configuration.start.rawValue - 1,
+        await SnapshotEntry.timeline(parts: { _ in [.coins] }, offset: configuration.offset,
                                      changeOnly: configuration.style == .changeOnly,
                                      background: configuration.background)
     }
@@ -150,9 +208,26 @@ struct QuoteEntityQuery: EntityQuery {
     }
 }
 
+/// 자유 구성 위젯 배경. 줄마다 그 항목의 로고 색(코인·주식) 또는 통화 대표 색(환율)을 깐다.
+/// 색은 Shared.swift `ItemTint`, 그리기는 Widgets.swift `MixWidgetView`.
+enum MixBackground: String, AppEnum {
+    case plain, rowTint, rowFade, rowCard
+
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "배경"
+    static let caseDisplayRepresentations: [MixBackground: DisplayRepresentation] = [
+        .plain: "기본",
+        .rowTint: "줄마다 색",
+        .rowFade: "줄마다 색 (옅어지게)",
+        .rowCard: "줄마다 카드",
+    ]
+}
+
 struct MixWidgetIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "자유 구성"
     static let description = IntentDescription("칸마다 코인·국내주식·미국주식·환율 중 보여줄 항목을 골라요. 하나도 안 고르면 첫 코인·첫 종목·환율이 보여요.")
+
+    @Parameter(title: "배경 선택", default: .plain)
+    var background: MixBackground
 
     @Parameter(title: "첫 번째 칸")
     var slot1: QuoteEntity?
@@ -174,7 +249,8 @@ struct MixProvider: AppIntentTimelineProvider {
     }
 
     func snapshot(for configuration: MixWidgetIntent, in context: Context) async -> SnapshotEntry {
-        .current(isPreview: context.isPreview, selected: configuration.selected)
+        .current(isPreview: context.isPreview, selected: configuration.selected,
+                 mixStyle: configuration.background)
     }
 
     func timeline(for configuration: MixWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
@@ -187,7 +263,7 @@ struct MixProvider: AppIntentTimelineProvider {
             Set(ids(snap).compactMap { id -> StockMarket? in
                 id.hasPrefix("kr:") ? .kr : (id.hasPrefix("stock:") ? .us : nil)
             })
-        }, selected: configuration.selected,
+        }, selected: configuration.selected, mixStyle: configuration.background,
         logos: { snap in picked.isEmpty ? MixItem.defaults(in: snap) : picked })
     }
 }

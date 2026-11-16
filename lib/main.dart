@@ -33,6 +33,8 @@ Future<void> main() async {
     kis: kis,
   );
   runApp(MarketPeekApp(state: state));
+  // 백그라운드에서 돌아오면 시세를 새로 받고 꺼진 라이브 액티비티를 다시 띄운다.
+  AppLifecycleListener(onResume: state.onResume);
   await state.load();
 }
 
