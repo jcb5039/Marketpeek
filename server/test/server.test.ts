@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchFx, kstDate } from '../src/eximbank';
 import worker, { refresh, type Env } from '../src/index';
+import { sampleIssue } from '../src/issue';
 
 const jsonRes = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -114,8 +115,39 @@ describe('refresh / GET /quotes', () => {
     expect(fetchMock.mock.calls.every(([u]) => String(u).includes('koreaexim'))).toBe(true);
   });
 
+  it('/quotes의 issue는 예시 이슈가 있어도 아직 null이다', async () => {
+    stubApis();
+    const res = await worker.fetch(new Request('https://x/quotes?fx=USD'), env());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.issue).toBeNull();
+  });
+
   it('없는 경로는 404', async () => {
     const res = await worker.fetch(new Request('https://x/nope'), env());
     expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /issue', () => {
+  it('앱·위젯이 읽는 형식(text, shortText, generatedAt)으로 예시 이슈를 돌려준다', async () => {
+    const res = await worker.fetch(new Request('https://x/issue'), env());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(typeof body.text).toBe('string');
+    expect(typeof body.shortText).toBe('string');
+    expect(Number.isNaN(Date.parse(body.generatedAt as string))).toBe(false);
+    expect(body.sample).toBe(true);
+  });
+
+  it('date는 한국 날짜 기준 어제다', () => {
+    // UTC 11-15 14:59 = KST 11-15 23:59 → 어제는 11-14
+    expect(sampleIssue(new Date('2026-11-15T14:59:00Z')).date).toBe('2026-11-14');
+    // UTC 11-15 15:00 = KST 11-16 00:00 → 어제는 11-15
+    expect(sampleIssue(new Date('2026-11-15T15:00:00Z')).date).toBe('2026-11-15');
+  });
+
+  it('GET이 아니면 405', async () => {
+    const res = await worker.fetch(new Request('https://x/issue', { method: 'POST' }), env());
+    expect(res.status).toBe(405);
   });
 });

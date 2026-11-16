@@ -111,8 +111,9 @@ struct PositionProvider: AppIntentTimelineProvider {
         let offset = configuration.offset
         // 홈 화면 2×2만 로고를 보여주므로 그때만 받는다.
         let wantsLogo = context.family == .systemSmall
-        return await SnapshotEntry.timeline(parts: { _ in [.stocks] }, offset: offset,
-                                            background: configuration.background, logos: { snap in
+        return await SnapshotEntry.timeline(parts: { _ in [.stocks] }, markets: { _ in [.us] },
+                                            offset: offset, background: configuration.background,
+                                            logos: { snap in
             guard wantsLogo, let st = snap.stocks.dropFirst(offset).first else { return [] }
             return ["stock:\(st.ticker)"]
         })
@@ -254,9 +255,14 @@ struct MixProvider: AppIntentTimelineProvider {
 
     func timeline(for configuration: MixWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
         let picked = configuration.selected.compactMap { $0 }
+        let ids = { (snap: Snapshot) in picked.isEmpty ? MixItem.defaults(in: snap) : picked }
         return await SnapshotEntry.timeline(parts: { snap in
             // 칸에 실제로 보이는 항목의 묶음만 받는다 (안 고르면 기본 항목).
-            Set((picked.isEmpty ? MixItem.defaults(in: snap) : picked).compactMap(QuotePart.of(itemId:)))
+            Set(ids(snap).compactMap(QuotePart.of(itemId:)))
+        }, markets: { snap in
+            Set(ids(snap).compactMap { id -> StockMarket? in
+                id.hasPrefix("kr:") ? .kr : (id.hasPrefix("stock:") ? .us : nil)
+            })
         }, selected: configuration.selected, mixStyle: configuration.background,
         logos: { snap in picked.isEmpty ? MixItem.defaults(in: snap) : picked })
     }
