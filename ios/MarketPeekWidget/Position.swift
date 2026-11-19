@@ -245,7 +245,13 @@ struct CoinProvider: AppIntentTimelineProvider {
                                             changeOnly: configuration.style == .changeOnly,
                                             background: homeBackground(configuration.background, layout: p.layout),
                                             layout: p.layout, pagingId: p.pagingId,
-                                            withIssue: WidgetPaging.isHome(context.family))
+                                            withIssue: WidgetPaging.isHome(context.family),
+                                            chart: WidgetPaging.isHome(context.family) && p.layout == .single
+                                                ? { snap in
+                                                    // 화면에 보이는 코인 하나의 24시간 차트만 받는다.
+                                                    guard snap.coins.indices.contains(p.offset) else { return nil }
+                                                    return await LiveQuotes.coinChart(snap.coins[p.offset].symbol)
+                                                } : nil)
     }
 }
 

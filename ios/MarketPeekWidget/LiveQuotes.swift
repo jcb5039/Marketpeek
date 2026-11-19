@@ -143,6 +143,21 @@ enum LiveQuotes {
         }
     }
 
+    /// 홈 위젯 한 종목 모양의 차트: 최근 24시간 가격(30분봉 48개, 오래된 것부터).
+    /// 실패하면 nil이고 위젯은 차트 없이 그린다. 시세가 아니므로 갱신 시각에는 영향이 없다.
+    static func coinChart(_ symbol: String) async -> [Double]? {
+        var c = URLComponents(string: "https://api.upbit.com/v1/candles/minutes/30")!
+        c.queryItems = [URLQueryItem(name: "market", value: "KRW-\(symbol)"),
+                        URLQueryItem(name: "count", value: "48")]
+        guard let url = c.url else { return nil }
+        return await Reuse.shared.value("chart:" + url.absoluteString) { () async -> [Double]? in
+            guard let list = await getJSON(URLRequest(url: url)) as? [[String: Any]] else { return nil }
+            // 업비트는 최근 것부터 준다.
+            let prices = Array(list.compactMap { num($0["trade_price"]) }.reversed())
+            return prices.count >= 2 ? prices : nil
+        }.value
+    }
+
     private static func upbit(_ symbols: [String]) async -> [String: Price]? {
         var c = URLComponents(string: "https://api.upbit.com/v1/ticker")!
         c.queryItems = [URLQueryItem(name: "markets", value: symbols.map { "KRW-\($0)" }.joined(separator: ","))]

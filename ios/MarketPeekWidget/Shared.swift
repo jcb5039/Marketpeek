@@ -22,6 +22,8 @@ struct SnapshotEntry: TimelineEntry {
     var layout: HomeLayout = .single
     /// 다음 버튼(>)이 쓰는 이름표([WidgetPaging]). nil이면 버튼 없음(잠금화면, 한 화면에 다 들어갈 때).
     var pagingId: String? = nil
+    /// 한 종목 모양 홈 위젯의 차트 선 (오래된 가격부터). nil이면 차트 없이 그린다.
+    var chart: [Double]? = nil
 }
 
 extension SnapshotEntry {
@@ -36,8 +38,10 @@ extension SnapshotEntry {
                          selected: [String?] = [], background: LogoBackground = .plain,
                          mixStyle: MixBackground = .plain,
                          layout: HomeLayout = .single, pagingId: String? = nil, withIssue: Bool = false,
+                         chart: ((Snapshot) async -> [Double]?)? = nil,
                          logos: (Snapshot) -> [String] = { _ in [] }) async -> Timeline<SnapshotEntry> {
         var snap = Snapshot.load()
+        var points: [Double]? = nil
         var wanted: Set<QuotePart> = []
         var stockMarkets: Set<StockMarket> = []
         if let s = snap {
@@ -46,19 +50,27 @@ extension SnapshotEntry {
             // 주식 로고(자유 구성)는 시세와 동시에 받는다. 둘 다 끝난 뒤 엔트리를 만든다.
             let logoIds = logos(s)
             async let logoDone: Void = StockLogos.prefetch(itemIds: logoIds)
+            // 차트도 시세와 동시에 받는다. 실패해도 시세·갱신 시각에는 영향이 없다.
+            async let chartDone: [Double]? = loadChart(chart, s)
             // 홈 위젯 아래 "어제 이슈" 줄: 같이 받되 갱신 시각은 시세 기준으로만 바꾼다.
             snap = await LiveQuotes.refresh(s, parts: wanted, also: withIssue ? [.issue] : [])
             await logoDone
+            points = await chartDone
         }
         let now = Date()
         let minutes = Array(0..<60) + Array(stride(from: 60, to: 360, by: 10))
         let entries = minutes.map { m in
             SnapshotEntry(date: now.addingTimeInterval(Double(m) * 60), snapshot: snap,
                           offset: offset, changeOnly: changeOnly, selected: selected, background: background,
-                          mixStyle: mixStyle, layout: layout, pagingId: pagingId)
+                          mixStyle: mixStyle, layout: layout, pagingId: pagingId, chart: points)
         }
         let after = ReloadPlan.interval(parts: wanted, markets: stockMarkets, now: now)
         return Timeline(entries: entries, policy: .after(now.addingTimeInterval(after)))
+    }
+
+    private static func loadChart(_ load: ((Snapshot) async -> [Double]?)?, _ s: Snapshot) async -> [Double]? {
+        guard let load else { return nil }
+        return await load(s)
     }
 
     static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false,
