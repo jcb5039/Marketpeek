@@ -877,7 +877,7 @@ struct ItemIcon: View {
     }
 
     /// 앱 Catalog.currencies(수출입은행 고시 22개)와 같은 목록.
-    private static let flags = [
+    static let flags = [
         "USD": "🇺🇸", "JPY": "🇯🇵", "EUR": "🇪🇺", "CNY": "🇨🇳", "THB": "🇹🇭",
         "GBP": "🇬🇧", "CHF": "🇨🇭", "CAD": "🇨🇦", "AUD": "🇦🇺", "NZD": "🇳🇿",
         "HKD": "🇭🇰", "SGD": "🇸🇬", "IDR": "🇮🇩", "MYR": "🇲🇾", "BND": "🇧🇳",
@@ -925,6 +925,27 @@ struct Backdrop {
               let u = StockLogos.fileURL(key: "us-\(st.ticker)"),
               let img = UIImage(contentsOfFile: u.path) else { return nil }
         return Backdrop(image: img, style: e.background)
+    }
+
+    /// 환율 위젯: 지금 보이는 통화의 국기 (이모지를 그림으로 그려 쓴다).
+    static func fx(_ e: SnapshotEntry) -> Backdrop? {
+        guard e.background != .plain, let s = e.snapshot else { return nil }
+        let fxs = s.fxList ?? (s.fx.map { [$0] } ?? [])
+        guard !fxs.isEmpty, let img = flagImage(fxs[e.offset % fxs.count].code) else { return nil }
+        return Backdrop(image: img, style: e.background)
+    }
+
+    static func flagImage(_ code: String) -> UIImage? {
+        guard let flag = ItemIcon.flags[code] else { return nil }
+        let side: CGFloat = 200
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            let font = UIFont.systemFont(ofSize: side * 0.8)
+            let text = flag as NSString
+            let size = text.size(withAttributes: [.font: font])
+            text.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: [.font: font])
+        }
     }
 }
 

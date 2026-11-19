@@ -191,7 +191,7 @@ struct FxWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: FxWidgetIntent.self, provider: FxProvider()) { entry in
-            FxWidgetView(entry: entry).widgetBackground()
+            FxWidgetView(entry: entry).widgetBackground(backdrop: .fx(entry))
         }
         .configurationDisplayName("환율")
         .description("앱에서 고른 통화의 원화 환율과 등락률. 홈 화면에서는 › 버튼으로 다음 통화를 봐요.")

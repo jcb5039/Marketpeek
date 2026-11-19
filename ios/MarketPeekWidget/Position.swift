@@ -153,10 +153,13 @@ struct PositionProvider: AppIntentTimelineProvider {
 
 struct FxWidgetIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "환율 위젯"
-    static let description = IntentDescription("홈 화면 모양을 골라요. 통화는 앱에서 고르고, › 버튼으로 다음 통화를 봐요.")
+    static let description = IntentDescription("홈 화면 모양과 배경을 골라요. 통화는 앱에서 고르고, › 버튼으로 다음 통화를 봐요. 배경은 한 종목 모양에만 적용돼요.")
 
     @Parameter(title: "모양", default: .auto)
     var layout: HomeLayout
+
+    @Parameter(title: "배경 선택", default: .plain)
+    var background: LogoBackground
 
     init() {}
 }
@@ -168,8 +171,10 @@ struct FxProvider: AppIntentTimelineProvider {
     }
 
     func snapshot(for configuration: FxWidgetIntent, in context: Context) async -> SnapshotEntry {
+        let layout = configuration.layout.resolved(for: context.family)
         let entry = SnapshotEntry.current(isPreview: context.isPreview,
-                                          layout: configuration.layout.resolved(for: context.family))
+                                          background: homeBackground(configuration.background, layout: layout),
+                                          layout: layout)
         var e = entry
         e.offset = Self.base(entry.snapshot)
         return e
@@ -180,7 +185,9 @@ struct FxProvider: AppIntentTimelineProvider {
         let p = WidgetPaging.plan(kind: "FxWidget", family: context.family, layout: configuration.layout,
                                   baseId: snap?.fx?.code ?? "", base: Self.base(snap),
                                   snapshot: snap, count: { $0.fxList?.count ?? 0 })
-        return await SnapshotEntry.timeline(parts: { _ in [.fx] }, offset: p.offset, layout: p.layout,
+        return await SnapshotEntry.timeline(parts: { _ in [.fx] }, offset: p.offset,
+                                            background: homeBackground(configuration.background, layout: p.layout),
+                                            layout: p.layout,
                                             pagingId: p.pagingId, withIssue: WidgetPaging.isHome(context.family))
     }
 
