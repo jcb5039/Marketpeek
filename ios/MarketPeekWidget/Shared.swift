@@ -23,7 +23,7 @@ struct SnapshotEntry: TimelineEntry {
     /// 다음 버튼(>)이 쓰는 이름표([WidgetPaging]). nil이면 버튼 없음(잠금화면, 한 화면에 다 들어갈 때).
     var pagingId: String? = nil
     /// 한 종목 모양 홈 위젯의 차트 선 (오래된 가격부터). nil이면 차트 없이 그린다.
-    var chart: [Double]? = nil
+    var chart: PriceChart? = nil
 }
 
 extension SnapshotEntry {
@@ -38,10 +38,10 @@ extension SnapshotEntry {
                          selected: [String?] = [], background: LogoBackground = .plain,
                          mixStyle: MixBackground = .plain,
                          layout: HomeLayout = .single, pagingId: String? = nil, withIssue: Bool = false,
-                         chart: ((Snapshot) async -> [Double]?)? = nil,
+                         chart: ((Snapshot) async -> PriceChart?)? = nil,
                          logos: (Snapshot) -> [String] = { _ in [] }) async -> Timeline<SnapshotEntry> {
         var snap = Snapshot.load()
-        var points: [Double]? = nil
+        var points: PriceChart? = nil
         var wanted: Set<QuotePart> = []
         var stockMarkets: Set<StockMarket> = []
         if let s = snap {
@@ -51,7 +51,7 @@ extension SnapshotEntry {
             let logoIds = logos(s)
             async let logoDone: Void = StockLogos.prefetch(itemIds: logoIds)
             // 차트도 시세와 동시에 받는다. 실패해도 시세·갱신 시각에는 영향이 없다.
-            async let chartDone: [Double]? = loadChart(chart, s)
+            async let chartDone: PriceChart? = loadChart(chart, s)
             // 홈 위젯 아래 "어제 이슈" 줄: 같이 받되 갱신 시각은 시세 기준으로만 바꾼다.
             snap = await LiveQuotes.refresh(s, parts: wanted, also: withIssue ? [.issue] : [])
             await logoDone
@@ -68,7 +68,7 @@ extension SnapshotEntry {
         return Timeline(entries: entries, policy: .after(now.addingTimeInterval(after)))
     }
 
-    private static func loadChart(_ load: ((Snapshot) async -> [Double]?)?, _ s: Snapshot) async -> [Double]? {
+    private static func loadChart(_ load: ((Snapshot) async -> PriceChart?)?, _ s: Snapshot) async -> PriceChart? {
         guard let load else { return nil }
         return await load(s)
     }

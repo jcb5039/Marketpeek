@@ -143,18 +143,23 @@ enum LiveQuotes {
         }
     }
 
-    /// 홈 위젯 한 종목 모양의 차트: 최근 24시간 가격(30분봉 48개, 오래된 것부터).
+    /// 홈 위젯 한 종목 모양의 차트: 최근 24시간 가격(30분봉 48개, 오래된 것부터)과 각 봉의 시작 시각.
     /// 실패하면 nil이고 위젯은 차트 없이 그린다. 시세가 아니므로 갱신 시각에는 영향이 없다.
-    static func coinChart(_ symbol: String) async -> [Double]? {
+    static func coinChart(_ symbol: String) async -> PriceChart? {
         var c = URLComponents(string: "https://api.upbit.com/v1/candles/minutes/30")!
         c.queryItems = [URLQueryItem(name: "market", value: "KRW-\(symbol)"),
                         URLQueryItem(name: "count", value: "48")]
         guard let url = c.url else { return nil }
-        return await Reuse.shared.value("chart:" + url.absoluteString) { () async -> [Double]? in
+        return await Reuse.shared.value("chart:" + url.absoluteString) { () async -> PriceChart? in
             guard let list = await getJSON(URLRequest(url: url)) as? [[String: Any]] else { return nil }
-            // 업비트는 최근 것부터 준다.
-            let prices = Array(list.compactMap { num($0["trade_price"]) }.reversed())
-            return prices.count >= 2 ? prices : nil
+            // 업비트는 최근 것부터 준다. candle_date_time_utc는 "2026-11-19T05:00:00"(시간대 표시 없음, UTC).
+            let points: [PriceChart.Point] = list.reversed().compactMap { item in
+                guard let price = num(item["trade_price"]),
+                      let t = item["candle_date_time_utc"] as? String,
+                      let date = Snapshot.parseDate(t + "Z") else { return nil }
+                return PriceChart.Point(date: date, price: price)
+            }
+            return points.count >= 2 ? PriceChart(points: points) : nil
         }.value
     }
 
@@ -340,6 +345,16 @@ enum LiveQuotes {
         }
         return nil
     }
+}
+
+/// 홈 위젯 차트 데이터: 시각별 가격 (오래된 것부터).
+struct PriceChart: Sendable, Hashable {
+    struct Point: Sendable, Hashable {
+        var date: Date
+        var price: Double
+    }
+
+    var points: [Point]
 }
 
 /// 같은 확장 프로세스에서 위젯 여러 개가 연달아 다시 불러올 때 같은 요청을 한 번만 보낸다.
