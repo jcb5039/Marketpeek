@@ -462,7 +462,7 @@ struct HomeCard: View {
                 Text(Fmt.hm(t)).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
             }
             RefreshButton()
-            if let next { NextButton(pagingId: next) }
+            if let next { PageButtons(pagingId: next) }
         }
         .widgetAccentable()
     }

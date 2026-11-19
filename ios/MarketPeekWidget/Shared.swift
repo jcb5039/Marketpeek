@@ -150,17 +150,20 @@ enum WidgetPaging {
         let size = pageSize(family, layout: resolved, hasIssue: snapshot.issue != nil)
         guard isHome(family), n > size else { return Plan(offset: base, layout: resolved) }
         let id = "\(kind)|\(family)|\(baseId)"
-        return Plan(offset: (base + steps(id) * size) % n, pagingId: id, layout: resolved)
+        // 이전 버튼으로 횟수가 음수가 될 수 있어 0..<n으로 맞춘다.
+        let raw = (base + steps(id) * size) % n
+        return Plan(offset: (raw + n) % n, pagingId: id, layout: resolved)
     }
 
     static func steps(_ id: String) -> Int {
         (store?.dictionary(forKey: storeKey)?[id] as? Int) ?? 0
     }
 
-    static func advance(_ id: String) {
+    /// [by]: 다음 +1, 이전 −1.
+    static func advance(_ id: String, by: Int = 1) {
         guard let store else { return }
         var all = store.dictionary(forKey: storeKey) ?? [:]
-        all[id] = (((all[id] as? Int) ?? 0) + 1) % 10_000
+        all[id] = (((all[id] as? Int) ?? 0) + by) % 10_000
         store.set(all, forKey: storeKey)
     }
 
@@ -171,7 +174,7 @@ enum WidgetPaging {
     }
 }
 
-/// 다음 버튼을 누르면 횟수만 올린다. 그 위젯의 타임라인은 WidgetKit이 다시 만든다(↻와 같은 방식).
+/// 다음(›)·이전(‹) 버튼을 누르면 횟수만 바꾼다. 그 위젯의 타임라인은 WidgetKit이 다시 만든다(↻와 같은 방식).
 struct NextItemIntent: AppIntent {
     static let title: LocalizedStringResource = "다음 종목"
     static let isDiscoverable = false
@@ -179,24 +182,41 @@ struct NextItemIntent: AppIntent {
     @Parameter(title: "위젯")
     var pagingId: String
 
+    /// 다음 +1, 이전 −1
+    @Parameter(title: "방향", default: 1)
+    var step: Int
+
     init() {}
-    init(pagingId: String) { self.pagingId = pagingId }
+    init(pagingId: String, step: Int = 1) {
+        self.pagingId = pagingId
+        self.step = step
+    }
 
     func perform() async throws -> some IntentResult {
         WidgetCache.markNavigated()
-        WidgetPaging.advance(pagingId)
+        WidgetPaging.advance(pagingId, by: step)
         return .result()
     }
 }
 
-/// 홈 화면 위젯 제목 줄 맨 오른쪽의 다음 버튼 ›
+/// 홈 화면 위젯 제목 줄 맨 오른쪽의 이전(‹)·다음(›) 버튼
+struct PageButtons: View {
+    let pagingId: String
+
+    var body: some View {
+        NextButton(pagingId: pagingId, step: -1)
+        NextButton(pagingId: pagingId)
+    }
+}
+
 struct NextButton: View {
     let pagingId: String
+    var step = 1
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        Button(intent: NextItemIntent(pagingId: pagingId)) {
-            HeaderButtonIcon(systemName: "chevron.right", family: family)
+        Button(intent: NextItemIntent(pagingId: pagingId, step: step)) {
+            HeaderButtonIcon(systemName: step < 0 ? "chevron.left" : "chevron.right", family: family)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
@@ -582,7 +602,7 @@ struct WidgetHeader: View {
             // 잠금화면 위젯은 누르면 앱이 열리므로 홈 화면에만 단다.
             if isHome {
                 RefreshButton()
-                if let next { NextButton(pagingId: next) }
+                if let next { PageButtons(pagingId: next) }
             }
         }
         .lineLimit(1)
