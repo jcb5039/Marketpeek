@@ -422,7 +422,6 @@ struct HomeCard: View {
                                         size: WidgetPaging.pageSize(family, layout: layout, hasIssue: hasIssue))
         VStack(alignment: .leading, spacing: 0) {
             header(layout == .list ? (listTitle ?? title) : title)
-            // ↻를 누르면 새 값이 올 때까지 iOS가 이 부분을 흐리게 표시한다(눌린 것이 바로 보이게).
             Group {
                 if layout == .single, let item = shown.first {
                     switch family {
@@ -438,11 +437,13 @@ struct HomeCard: View {
                     }
                 }
             }
-            .invalidatableContent()
             if let issue { issueFooter(issue) }
         }
         .lineLimit(1)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // 다음 종목으로 넘길 때 숫자·차트가 서서히 바뀌는 iOS 기본 효과를 끄고 바로 바꾼다.
+        .contentTransition(.identity)
+        .transaction { $0.animation = nil }
     }
 
     // MARK: 제목 줄: 제목 ······ 15:35 ↻ ›
