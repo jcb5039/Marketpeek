@@ -723,8 +723,8 @@ struct HomeCard: View {
 }
 
 /// 가격 차트 (Swift Charts): 선 + 아래 옅은 색 채움 + 기준 가격 점선. 색은 한 가지(등락률 색).
-/// 기준 가격 = 지금 가격 ÷ (1 + 등락률). 코인은 업비트 기준이라 오늘 오전 9시 가격이 되고,
-/// 선 끝이 점선 위면 등락률 +, 아래면 −로 숫자·색·그림이 항상 맞는다.
+/// 기준 가격 = 지금 가격 ÷ (1 + 등락률). 코인은 오늘 오전 9시 가격(업비트 기준), 환율은 전 영업일 환율,
+/// 미국주식은 전일 종가가 되어 선 끝이 점선 위면 등락률 +, 아래면 −로 숫자·색·그림이 항상 맞는다.
 struct PriceChartView: View {
     enum Axes { case none, price, full }
 
@@ -766,11 +766,11 @@ struct PriceChartView: View {
         .chartYAxis(axes == .none ? .hidden : .visible)
         .chartXAxis {
             if axes == .full {
-                AxisMarks(values: .stride(by: .hour, count: 6)) { v in
+                AxisMarks(values: xStride) { v in
                     AxisGridLine().foregroundStyle(HomePalette.line)
                     AxisValueLabel {
                         if let d = v.as(Date.self) {
-                            Text(Self.hourLabel(d)).font(.system(size: 8)).foregroundStyle(.secondary)
+                            Text(xLabel(d)).font(.system(size: 8)).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -781,7 +781,7 @@ struct PriceChartView: View {
                 AxisMarks(position: .trailing, values: [lo, hi]) { v in
                     AxisValueLabel {
                         if let y = v.as(Double.self) {
-                            Text(Fmt.krwShort(y)).font(.system(size: 8)).monospacedDigit()
+                            Text(yLabel(y)).font(.system(size: 8)).monospacedDigit()
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -790,9 +790,31 @@ struct PriceChartView: View {
         }
     }
 
-    /// "15시", 자정은 날짜 바뀜이 보이게 "0시".
-    static func hourLabel(_ d: Date) -> String {
-        "\(Calendar.current.component(.hour, from: d))시"
+    /// x축 간격: 코인 6시간, 환율 1주, 미국주식 2시간.
+    private var xStride: AxisMarkValues {
+        switch chart.kind {
+        case .coin: .stride(by: .hour, count: 6)
+        case .fx: .stride(by: .day, count: 7)
+        case .stock: .stride(by: .hour, count: 2)
+        }
+    }
+
+    /// 시간은 "15시", 날짜는 "11/5".
+    private func xLabel(_ d: Date) -> String {
+        let cal = Calendar.current
+        if chart.kind == .fx {
+            return "\(cal.component(.month, from: d))/\(cal.component(.day, from: d))"
+        }
+        return "\(cal.component(.hour, from: d))시"
+    }
+
+    /// y축: 코인 "9917만", 환율 "1,430.5", 미국주식 "$390.8".
+    private func yLabel(_ v: Double) -> String {
+        switch chart.kind {
+        case .coin: Fmt.krwShort(v)
+        case .fx: Fmt.grouped(v, fraction: v >= 100 ? 1 : 2)
+        case .stock: "$" + Fmt.grouped(v, fraction: v >= 100 ? 1 : 2)
+        }
     }
 }
 

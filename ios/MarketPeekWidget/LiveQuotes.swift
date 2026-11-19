@@ -164,6 +164,31 @@ enum LiveQuotes {
         return chart
     }
 
+    /// 환율 차트: 우리 서버 GET /fx/history (최근 30영업일, 오래된 것부터). 서버 주소가 없거나 실패하면 nil.
+    static func fxChart(_ code: String, base: String?, preferCache: Bool = false) async -> PriceChart? {
+        let key = "fx:\(code)"
+        if preferCache, let cached = WidgetCache.chart(key) { return cached }
+        guard let base, var c = URLComponents(string: base) else { return nil }
+        c.path = "/fx/history"
+        c.queryItems = [URLQueryItem(name: "code", value: code), URLQueryItem(name: "days", value: "30")]
+        guard let url = c.url else { return nil }
+        let chart = await Reuse.shared.value("chart:" + url.absoluteString) { () async -> PriceChart? in
+            guard let body = await getJSON(URLRequest(url: url)) as? [String: Any],
+                  let list = body["points"] as? [[String: Any]] else { return nil }
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = TimeZone(identifier: "Asia/Seoul")
+            f.dateFormat = "yyyy-MM-dd"
+            let points: [PriceChart.Point] = list.compactMap { item in
+                guard let d = (item["date"] as? String).flatMap(f.date(from:)), let r = num(item["rate"]) else { return nil }
+                return PriceChart.Point(date: d, price: r)
+            }
+            return points.count >= 2 ? PriceChart(points: points, kind: .fx) : nil
+        }.value
+        if let chart { WidgetCache.saveChart(chart, key: key) }
+        return chart
+    }
+
     private static func fetchCoinChart(_ symbol: String) async -> PriceChart? {
         var c = URLComponents(string: "https://api.upbit.com/v1/candles/minutes/30")!
         c.queryItems = [URLQueryItem(name: "market", value: "KRW-\(symbol)"),
@@ -373,7 +398,13 @@ struct PriceChart: Sendable, Hashable, Codable {
         var price: Double
     }
 
+    /// 축 표기 방식: 코인(24시간, 원화 "9917만") / 환율(30영업일, "1,430.50") / 미국주식(장중, "$390.84")
+    enum Kind: String, Sendable, Codable {
+        case coin, fx, stock
+    }
+
     var points: [Point]
+    var kind: Kind = .coin
 }
 
 /// 같은 확장 프로세스에서 위젯 여러 개가 연달아 다시 불러올 때 같은 요청을 한 번만 보낸다.

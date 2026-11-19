@@ -188,7 +188,16 @@ struct FxProvider: AppIntentTimelineProvider {
         return await SnapshotEntry.timeline(parts: { _ in [.fx] }, offset: p.offset,
                                             background: homeBackground(configuration.background, layout: p.layout),
                                             layout: p.layout,
-                                            pagingId: p.pagingId, withIssue: WidgetPaging.isHome(context.family))
+                                            pagingId: p.pagingId, withIssue: WidgetPaging.isHome(context.family),
+                                            chart: WidgetPaging.isHome(context.family) && p.layout == .single
+                                                ? { snap in
+                                                    // 화면에 보이는 통화 하나의 30영업일 차트만 받는다.
+                                                    let codes = (snap.fxList ?? []).map(\.code)
+                                                    guard let code = codes.isEmpty ? snap.fx?.code
+                                                            : codes[p.offset % codes.count] else { return nil }
+                                                    return await LiveQuotes.fxChart(code, base: snap.settings.apiBaseUrl,
+                                                                                    preferCache: WidgetCache.recentlyNavigated)
+                                                } : nil)
     }
 
     static func base(_ snap: Snapshot?) -> Int {
