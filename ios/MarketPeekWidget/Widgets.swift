@@ -422,19 +422,23 @@ struct HomeCard: View {
                                         size: WidgetPaging.pageSize(family, layout: layout, hasIssue: hasIssue))
         VStack(alignment: .leading, spacing: 0) {
             header(layout == .list ? (listTitle ?? title) : title)
-            if layout == .single, let item = shown.first {
-                switch family {
-                case .systemLarge: singleLarge(item)
-                case .systemMedium: singleMedium(item)
-                default: singleSmall(item)
-                }
-            } else {
-                switch family {
-                case .systemLarge: listLarge(shown, hasIssue: hasIssue)
-                case .systemMedium: listMedium(shown, hasIssue: hasIssue)
-                default: listSmall(shown, hasIssue: hasIssue)
+            // ↻를 누르면 새 값이 올 때까지 iOS가 이 부분을 흐리게 표시한다(눌린 것이 바로 보이게).
+            Group {
+                if layout == .single, let item = shown.first {
+                    switch family {
+                    case .systemLarge: singleLarge(item)
+                    case .systemMedium: singleMedium(item)
+                    default: singleSmall(item)
+                    }
+                } else {
+                    switch family {
+                    case .systemLarge: listLarge(shown, hasIssue: hasIssue)
+                    case .systemMedium: listMedium(shown, hasIssue: hasIssue)
+                    default: listSmall(shown, hasIssue: hasIssue)
+                    }
                 }
             }
+            .invalidatableContent()
             if let issue { issueFooter(issue) }
         }
         .lineLimit(1)
