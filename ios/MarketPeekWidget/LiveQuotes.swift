@@ -311,6 +311,51 @@ enum LiveQuotes {
         case us(String, String)
     }
 
+    /// 미국주식 차트: KIS 해외주식 분봉 조회(HHDFS76950200), 마지막 거래일 장중 10분봉(최대 40개, 오래된 것부터).
+    /// 시세 요청이 토큰을 새로 받으므로 여기서는 저장된 토큰이 있을 때만 부른다. 증권사 미연결·실패면 nil.
+    /// 시세 요청과 겹쳐 1초 요청 한도(EGW00201)에 걸리면 잠깐 기다렸다 한 번 더 시도한다.
+    static func stockChart(_ ticker: String, excd: String?, preferCache: Bool = false) async -> PriceChart? {
+        let key = "stock:\(ticker)"
+        if preferCache, let cached = WidgetCache.chart(key) { return cached }
+        guard let excd, let appKey = Keychain.read("kis.appKey"), let appSecret = Keychain.read("kis.appSecret"),
+              let token = KisTokenIssuer.validSaved() else { return nil }
+        var c = URLComponents(string: kisBase + "/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice")!
+        c.queryItems = ["AUTH": "", "EXCD": excd, "SYMB": ticker, "NMIN": "10", "PINC": "0",
+                        "NEXT": "", "NREC": "40", "FILL": "", "KEYB": ""]
+            .map { URLQueryItem(name: $0.key, value: $0.value) }
+        var req = URLRequest(url: c.url!)
+        for (k, v) in ["content-type": "application/json; charset=utf-8",
+                       "authorization": "Bearer \(token)", "appkey": appKey, "appsecret": appSecret,
+                       "tr_id": "HHDFS76950200", "custtype": "P"] {
+            req.setValue(v, forHTTPHeaderField: k)
+        }
+        let request = req
+        let chart = await Reuse.shared.value("chart:" + key) { () async -> PriceChart? in
+            var body = await getJSON(request, anyStatus: true) as? [String: Any]
+            if body?["msg_cd"] as? String == "EGW00201" {
+                try? await Task.sleep(nanoseconds: kisRetryDelay)
+                body = await getJSON(request, anyStatus: true) as? [String: Any]
+            }
+            guard let body, body["rt_cd"] as? String == "0",
+                  let rows = body["output2"] as? [[String: Any]] else { return nil }
+            // 한국 기준 일자·시각(kymd "20261119", khms "053000"). 최근 것부터 오므로 뒤집는다.
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = TimeZone(identifier: "Asia/Seoul")
+            f.dateFormat = "yyyyMMddHHmmss"
+            let lastDay = rows.first?["tymd"] as? String
+            let points: [PriceChart.Point] = rows.reversed().compactMap { r in
+                guard (r["tymd"] as? String) == lastDay,
+                      let ymd = r["kymd"] as? String, let hms = r["khms"] as? String,
+                      let d = f.date(from: ymd + hms), let last = num(r["last"]), last != 0 else { return nil }
+                return PriceChart.Point(date: d, price: last)
+            }
+            return points.count >= 2 ? PriceChart(points: points, kind: .stock) : nil
+        }.value
+        if let chart { WidgetCache.saveChart(chart, key: key) }
+        return chart
+    }
+
     struct KisCall: Sendable {
         let appKey: String
         let appSecret: String

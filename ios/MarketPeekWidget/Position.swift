@@ -140,6 +140,14 @@ struct PositionProvider: AppIntentTimelineProvider {
                                             background: homeBackground(configuration.background, layout: p.layout),
                                             layout: p.layout, pagingId: p.pagingId,
                                             withIssue: WidgetPaging.isHome(family),
+                                            chart: WidgetPaging.isHome(family) && p.layout == .single
+                                                ? { snap in
+                                                    // 화면에 보이는 종목 하나의 장중 차트만 받는다(증권사 연결 필요).
+                                                    guard snap.stocks.indices.contains(p.offset) else { return nil }
+                                                    let st = snap.stocks[p.offset]
+                                                    return await LiveQuotes.stockChart(st.ticker, excd: st.excd,
+                                                                                       preferCache: WidgetCache.recentlyNavigated)
+                                                } : nil,
                                             logos: { snap in
             guard WidgetPaging.isHome(family) else { return [] }
             return WidgetPaging.window(snap.stocks, start: p.offset,
