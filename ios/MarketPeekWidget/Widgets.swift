@@ -10,6 +10,9 @@ import ActivityKit
 //  - accessoryCircular: 시계 아래 1칸. 코인은 둥근 사각형에 1개(심볼 위·등락률 아래), 미국주식/환율은 원형 1개.
 //  - systemSmall: 홈 화면 2×2. 4종 모두. 종목 1개를 크게(심볼·이름·가격·등락률).
 //    자유 구성(MixWidget)은 2×2 전용: 칸 3개에 코인·주식·환율을 섞어서 고른다(Position.swift).
+//  - systemMedium(4×2)·systemLarge(4×4): 코인·미국주식·환율. 목록(3줄/6줄) 또는 "한 종목 크게"(코인·미국주식만,
+//    위젯 편집 "큰 위젯 모양"). 홈 위젯 제목 줄의 › 버튼은 다음 종목(2×2·한 종목)/다음 묶음(목록)으로 넘긴다.
+//    스냅샷에는 종목이 6개까지라 4×4 목록은 버튼 없이 다 보인다.
 //  iOS 잠금화면 시계 아래는 4칸이 한도: 직사각형 2개 / 직사각형 1 + 원형 2 / 원형 4.
 //
 // 코인·미국주식은 "위젯 편집"에서 보여줄 종목을 이름으로 고른다(Position.swift).
@@ -31,9 +34,11 @@ struct CoinWidget: Widget {
         }
         .configurationDisplayName("코인")
         .description("고른 코인의 원화 가격과 등락률. 길게 눌러 코인과 배경을 고를 수 있어요.")
-        .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
+        .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular,
+                            .systemSmall, .systemMedium, .systemLarge])
     }
 }
+
 
 struct CoinWidgetView: View {
     let entry: SnapshotEntry
@@ -49,10 +54,14 @@ struct CoinWidgetView: View {
                 Text("\(c.symbol) \(c.price ?? "—") \(Fmt.change(c.change))")
             case .accessoryCircular:
                 SmallSquareQuote(item: .init(symbol: c.symbol, change: c.change), scheme: scheme)
-            case .systemSmall:
+            case .systemSmall where entry.layout == .single && Backdrop.coin(entry) != nil:
+                // 로고 배경을 고른 2×2는 로고 배경용 카드.
                 SmallHomeCard(title: "코인", snapshot: snap, now: entry.date, symbol: c.symbol, name: c.name,
                               prices: [c.price, Fmt.dropWon(c.price), c.priceShort].compactMap { $0 },
-                              change: c.change, scheme: scheme, icon: .coin(c.symbol))
+                              change: c.change, scheme: scheme, icon: .coin(c.symbol), next: entry.pagingId)
+            case .systemSmall, .systemMedium, .systemLarge:
+                HomeCard(title: "코인", entry: entry, snapshot: snap,
+                         items: snap.coins.map { HomeItem.coin($0, snap) })
             default:
                 if entry.changeOnly {
                     ChangeOnlyRows(
@@ -89,7 +98,8 @@ struct StockWidget: Widget {
         }
         .configurationDisplayName("미국주식")
         .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 종목과 배경을 고를 수 있어요.")
-        .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
+        .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular,
+                            .systemSmall, .systemMedium, .systemLarge])
     }
 }
 
@@ -116,13 +126,16 @@ struct StockWidgetView: View {
                 Text("\(st.ticker) \(st.priceUsd ?? "—") \(Fmt.change(st.change))")
             case .accessoryCircular:
                 CircularQuote(symbol: st.ticker, change: st.change, scheme: s.colorScheme)
-            case .systemSmall:
+            case .systemSmall where entry.layout == .single && Backdrop.stock(entry) != nil:
                 SmallHomeCard(title: title, snapshot: snap, now: entry.date, symbol: st.ticker, name: st.name,
                               prices: [st.priceUsd ?? "—"],
                               // 원화는 달러 옆에 (들어가면 전체, 아니면 "53만"). 원화 환율이 없으면 달러만.
                               inlineSecondary: s.showStockKrw ? [st.priceKrw, st.priceKrwShort].compactMap { $0 } : [],
                               change: st.change, scheme: s.colorScheme,
-                              icon: .stock(id: "us-\(st.ticker)", letter: st.ticker))
+                              icon: .stock(id: "us-\(st.ticker)", letter: st.ticker), next: entry.pagingId)
+            case .systemSmall, .systemMedium, .systemLarge:
+                HomeCard(title: title, entry: entry, snapshot: snap,
+                         items: snap.stocks.map { HomeItem.stock($0, snap, now: entry.date) })
             default:
                 HeaderedRows {
                     WidgetHeader(title: title, snapshot: snap, now: entry.date)
@@ -176,12 +189,13 @@ struct FxWidget: Widget {
     let kind = "FxWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: SnapshotProvider(part: .fx)) { entry in
+        AppIntentConfiguration(kind: kind, intent: FxWidgetIntent.self, provider: FxProvider()) { entry in
             FxWidgetView(entry: entry).widgetBackground()
         }
         .configurationDisplayName("환율")
-        .description("앱에서 고른 통화의 원화 환율과 등락률")
-        .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .systemSmall])
+        .description("앱에서 고른 통화의 원화 환율과 등락률. 홈 화면에서는 › 버튼으로 다음 통화를 봐요.")
+        .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular,
+                            .systemSmall, .systemMedium, .systemLarge])
     }
 }
 
@@ -189,10 +203,16 @@ struct FxWidgetView: View {
     let entry: SnapshotEntry
     @Environment(\.widgetFamily) private var family
 
+    private static func pair(_ fx: Snapshot.Fx) -> String {
+        fx.unit == 1 ? "\(fx.code)/KRW" : "\(fx.unit) \(fx.code)"
+    }
+
     var body: some View {
+        let fxs = entry.snapshot.map { $0.fxList ?? ($0.fx.map { [$0] } ?? []) } ?? []
+        // 잠금화면은 앱에서 고른 대표 통화. 홈 화면은 대표 통화부터 다음 버튼을 누른 만큼(FxProvider).
         if let snap = entry.snapshot, let fx = snap.fx {
             let scheme = snap.settings.colorScheme
-            let pair = fx.unit == 1 ? "\(fx.code)/KRW" : "\(fx.unit) \(fx.code)"
+            let pair = Self.pair(fx)
             switch family {
             case .accessoryInline:
                 Text("\(pair) \(fx.rate ?? "—") \(Fmt.change(fx.change))")
@@ -208,10 +228,9 @@ struct FxWidgetView: View {
                     .minimumScaleFactor(0.5)
                     .padding(.horizontal, 3)
                 }
-            case .systemSmall:
-                SmallHomeCard(title: "환율", snapshot: snap, now: entry.date, symbol: pair, name: fx.name,
-                              prices: [fx.rate, Fmt.dropWon(fx.rate)].compactMap { $0 },
-                              change: fx.change, scheme: scheme, icon: .flag(fx.code))
+            case .systemSmall, .systemMedium, .systemLarge:
+                HomeCard(title: "환율", listTitle: "환율 · 원화 기준", entry: entry, snapshot: snap,
+                         items: fxs.map { HomeItem.fx($0, snap) })
             default:
                 VStack(alignment: .leading, spacing: 1) {
                     WidgetHeader(title: "환율 · \(pair)", snapshot: snap, now: entry.date)
@@ -289,6 +308,329 @@ struct IssueWidgetView: View {
     }
 }
 
+// MARK: - 홈 화면 시안 (코인·미국주식·환율·자유 구성 공통)
+// 라이트·다크는 iOS 설정을 따른다(Shared.swift `HomePalette`). 아래 "어제 이슈" 줄은 이슈가 있을 때만 나오고,
+// 없으면 그 자리를 가격·목록이 채운다. 차트 선 자리는 다음 작업에서 채운다.
+
+/// 홈 위젯 한 종목. 한 종목 모양은 [price]·[sub], 목록은 [listPrice]·[listSub]를 쓴다.
+struct HomeItem: Hashable {
+    var icon: ItemIcon.Kind
+    var symbol: String
+    var name: String
+    /// 한 종목 모양의 큰 가격 ("9917만원", "$390.84", "1,336.70원")
+    var price: String
+    /// 한 종목 모양의 가격 아래 ("업비트 · 원화", "522,436원", "1 USD 기준")
+    var sub: String? = nil
+    /// 목록 가격 ("9917만", "$390.84", "1,336.70")
+    var listPrice: String
+    /// 4×4 목록 가격 아래 (미국주식 원화)
+    var listSub: String? = nil
+    var change: Double?
+    /// 4×4 한 종목 아래 정보 칸 3개 (이름, 값)
+    var info: [Pair] = []
+
+    struct Pair: Hashable {
+        var label: String
+        var value: String
+    }
+
+    init(icon: ItemIcon.Kind, symbol: String, name: String, price: String, sub: String? = nil,
+         listPrice: String, listSub: String? = nil, change: Double?, info: [Pair] = []) {
+        self.icon = icon; self.symbol = symbol; self.name = name; self.price = price; self.sub = sub
+        self.listPrice = listPrice; self.listSub = listSub; self.change = change; self.info = info
+    }
+
+    private static func updated(_ s: Snapshot) -> Pair {
+        Pair(label: "마지막 갱신", value: s.updatedAt.map(Fmt.hm) ?? "—")
+    }
+
+    static func coin(_ c: Snapshot.Coin, _ s: Snapshot) -> HomeItem {
+        let short = c.priceShort.map { $0.hasSuffix("원") ? $0 : "\($0)원" }
+        return HomeItem(icon: .coin(c.symbol), symbol: c.symbol, name: c.name,
+                        price: short ?? c.price ?? "—", sub: "업비트 · 원화",
+                        listPrice: c.priceShort ?? Fmt.dropWon(c.price) ?? "—", change: c.change,
+                        info: [Pair(label: "시세 출처", value: "업비트"),
+                               Pair(label: "기준 통화", value: "원화 KRW"), updated(s)])
+    }
+
+    static func stock(_ st: Snapshot.Stock, _ s: Snapshot, now: Date) -> HomeItem {
+        let krw = s.settings.showStockKrw ? st.priceKrw : nil
+        let noPrice = s.settings.isStocksConnected ? "—" : "증권사 연결 필요"
+        let open = MarketHours.isOpen(at: now)
+        return HomeItem(icon: .stock(id: "us-\(st.ticker)", letter: st.ticker), symbol: st.ticker, name: st.name,
+                        price: st.priceUsd ?? noPrice, sub: krw,
+                        listPrice: st.priceUsd ?? "—", listSub: krw, change: st.change,
+                        info: [Pair(label: "장 상태", value: open ? "장중" : "장 마감 · 종가"),
+                               Pair(label: "적용 환율 USD/KRW",
+                                    value: s.usdKrw.flatMap { Fmt.dropWon(Fmt.fxRate($0)) } ?? "—"),
+                               updated(s)])
+    }
+
+    static func fx(_ fx: Snapshot.Fx, _ s: Snapshot) -> HomeItem {
+        HomeItem(icon: .flag(fx.code), symbol: fx.code,
+                 name: fx.unit == 1 ? fx.name : "\(fx.name) (\(fx.unit))",
+                 price: fx.rate ?? "—", sub: "\(fx.unit) \(fx.code) 기준",
+                 listPrice: Fmt.dropWon(fx.rate) ?? "—", change: fx.change,
+                 info: [Pair(label: "통화쌍", value: "\(fx.code)/KRW"),
+                        Pair(label: "기준 단위", value: "\(fx.unit) \(fx.code)"), updated(s)])
+    }
+}
+
+/// 홈 위젯 시안 카드: 제목 줄 / 한 종목 또는 목록 / (이슈가 있으면) 어제 이슈 줄.
+struct HomeCard: View {
+    let title: String
+    var listTitle: String? = nil
+    let snapshot: Snapshot
+    /// 전체 항목. [offset]부터 한 화면 개수만큼 보여준다(끝을 지나면 처음부터).
+    let items: [HomeItem]
+    /// 풀어 둔 모양 (한 종목 / 목록)
+    let layout: HomeLayout
+    var offset = 0
+    var next: String? = nil
+    @Environment(\.widgetFamily) private var family
+
+    init(title: String, listTitle: String? = nil, snapshot: Snapshot, items: [HomeItem],
+         layout: HomeLayout, offset: Int = 0, next: String? = nil) {
+        self.title = title; self.listTitle = listTitle; self.snapshot = snapshot; self.items = items
+        self.layout = layout; self.offset = offset; self.next = next
+    }
+
+    init(title: String, listTitle: String? = nil, entry: SnapshotEntry, snapshot: Snapshot, items: [HomeItem]) {
+        self.init(title: title, listTitle: listTitle, snapshot: snapshot, items: items,
+                  layout: entry.layout, offset: entry.offset, next: entry.pagingId)
+    }
+
+    private var scheme: String { snapshot.settings.colorScheme }
+
+    var body: some View {
+        let issue = snapshot.issue
+        let hasIssue = issue != nil
+        let shown = WidgetPaging.window(items, start: offset,
+                                        size: WidgetPaging.pageSize(family, layout: layout, hasIssue: hasIssue))
+        VStack(alignment: .leading, spacing: 0) {
+            header(layout == .list ? (listTitle ?? title) : title)
+            if layout == .single, let item = shown.first {
+                switch family {
+                case .systemLarge: singleLarge(item)
+                case .systemMedium: singleMedium(item)
+                default: singleSmall(item)
+                }
+            } else {
+                switch family {
+                case .systemLarge: listLarge(shown, hasIssue: hasIssue)
+                case .systemMedium: listMedium(shown, hasIssue: hasIssue)
+                default: listSmall(shown, hasIssue: hasIssue)
+                }
+            }
+            if let issue { issueFooter(issue) }
+        }
+        .lineLimit(1)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: 제목 줄: 제목 ······ 15:35 ↻ ›
+
+    private func header(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            if snapshot.settings.showUpdatedAt, let t = snapshot.updatedAt {
+                Text(Fmt.hm(t)).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
+            }
+            RefreshButton()
+            if let next { NextButton(pagingId: next) }
+        }
+        .widgetAccentable()
+    }
+
+    // MARK: 어제 이슈 줄
+
+    private func issueFooter(_ issue: Snapshot.Issue) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HomePalette.line.frame(height: 1).padding(.bottom, 4)
+            if family != .systemSmall {
+                Text("✦ 어제 이슈 · AI").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            Text(issue.text)
+                .font(.system(size: family == .systemSmall ? 10 : 11, weight: .medium))
+                .lineLimit(family == .systemMedium ? 1 : 2)
+                .minimumScaleFactor(0.9)
+        }
+    }
+
+    // MARK: 한 종목
+
+    private func nameLine(_ item: HomeItem, icon: CGFloat, font: CGFloat, showName: Bool) -> some View {
+        HStack(spacing: 5) {
+            ItemIcon(kind: item.icon, size: icon)
+            Text(item.symbol).font(.system(size: font, weight: .bold))
+            if showName {
+                Text(item.name).font(.system(size: font * 0.65)).foregroundStyle(.secondary)
+            }
+        }
+        .minimumScaleFactor(0.7)
+    }
+
+    private func change(_ pct: Double?, _ size: CGFloat) -> some View {
+        ChangeText(pct: pct, scheme: scheme).font(.system(size: size, weight: .semibold)).monospacedDigit()
+    }
+
+    private func bigPrice(_ s: String, _ size: CGFloat) -> some View {
+        Text(s).font(.system(size: size, weight: .bold)).monospacedDigit().minimumScaleFactor(0.5)
+    }
+
+    private func singleSmall(_ item: HomeItem) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Spacer(minLength: 4)
+            nameLine(item, icon: 16, font: 13, showName: false)
+            Spacer(minLength: 4)
+            bigPrice(item.price, 20)
+            HStack(spacing: 4) {
+                if let sub = item.sub { Text(sub).font(.system(size: 9)).foregroundStyle(.secondary) }
+                Spacer(minLength: 2)
+                change(item.change, 11)
+            }
+            .minimumScaleFactor(0.7)
+            Spacer(minLength: snapshot.issue == nil ? 0 : 6)
+        }
+    }
+
+    private func singleMedium(_ item: HomeItem) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer(minLength: 4)
+            HStack(alignment: .bottom, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    nameLine(item, icon: 18, font: 14, showName: true)
+                    bigPrice(item.price, 24)
+                    if let sub = item.sub { Text(sub).font(.system(size: 10)).foregroundStyle(.secondary) }
+                }
+                Spacer(minLength: 8)
+                change(item.change, 14)
+            }
+            Spacer(minLength: snapshot.issue == nil ? 0 : 6)
+        }
+    }
+
+    private func singleLarge(_ item: HomeItem) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                nameLine(item, icon: 20, font: 16, showName: true)
+                Spacer(minLength: 6)
+                change(item.change, 15)
+            }
+            .padding(.top, 10)
+            bigPrice(item.price, 34).padding(.top, 8)
+            if let sub = item.sub { Text(sub).font(.system(size: 11)).foregroundStyle(.secondary) }
+            Spacer(minLength: 8)
+            HomePalette.line.frame(height: 1)
+            HStack(alignment: .top, spacing: 6) {
+                ForEach(item.info, id: \.self) { p in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(p.label).font(.system(size: 9)).foregroundStyle(.secondary)
+                        Text(p.value).font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                    }
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    // MARK: 목록
+
+    /// 한 줄: 심볼 | 가격 | 등락률 (2×2, 4×2 이슈 있음)
+    private func compactRows(_ rows: [HomeItem], spacing: CGFloat) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: spacing) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
+                GridRow {
+                    Text(r.symbol).font(.system(size: 11, weight: .bold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(r.listPrice).font(.system(size: 11)).monospacedDigit()
+                        .gridColumnAlignment(.trailing)
+                    change(r.change, 11).gridColumnAlignment(.trailing)
+                }
+            }
+        }
+        .minimumScaleFactor(0.6)
+    }
+
+    /// 두 줄: 심볼·이름 | 가격·등락률 (4×2 이슈 없음)
+    private func stackedRows(_ rows: [HomeItem]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: 6) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
+                GridRow {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(r.symbol).font(.system(size: 11, weight: .bold))
+                        Text(r.name).font(.system(size: 8)).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(r.listPrice).font(.system(size: 11)).monospacedDigit()
+                        change(r.change, 10)
+                    }
+                    .gridColumnAlignment(.trailing)
+                }
+            }
+        }
+        .minimumScaleFactor(0.6)
+    }
+
+    private func listSmall(_ rows: [HomeItem], hasIssue: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            compactRows(rows, spacing: hasIssue ? 4 : 5).padding(.top, 8)
+            Spacer(minLength: hasIssue ? 6 : 0)
+        }
+    }
+
+    private func listMedium(_ rows: [HomeItem], hasIssue: Bool) -> some View {
+        let left = Array(rows.prefix(3)), right = Array(rows.dropFirst(3))
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
+                if hasIssue {
+                    compactRows(left, spacing: 4)
+                    compactRows(right, spacing: 4)
+                } else {
+                    stackedRows(left)
+                    stackedRows(right)
+                }
+            }
+            .padding(.top, 8)
+            Spacer(minLength: hasIssue ? 6 : 0)
+        }
+    }
+
+    private func listLarge(_ rows: [HomeItem], hasIssue: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: hasIssue ? 7 : 9) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
+                    GridRow {
+                        HStack(spacing: 8) {
+                            ItemIcon(kind: r.icon, size: 22)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(r.symbol).font(.system(size: 12, weight: .bold))
+                                Text(r.name).font(.system(size: 9)).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .trailing, spacing: 0) {
+                            Text(r.listPrice).font(.system(size: 12)).monospacedDigit()
+                            if let s = r.listSub {
+                                Text(s).font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
+                            }
+                        }
+                        .gridColumnAlignment(.trailing)
+                        change(r.change, 12).gridColumnAlignment(.trailing)
+                    }
+                }
+            }
+            .minimumScaleFactor(0.6)
+            .padding(.top, 10)
+            Spacer(minLength: hasIssue ? 8 : 0)
+        }
+    }
+}
+
 // MARK: - Bundle
 
 @main
@@ -310,11 +652,11 @@ struct MixWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: MixWidgetIntent.self, provider: MixProvider()) { entry in
-            MixWidgetView(entry: entry).widgetBackground()
+            MixWidgetView(entry: entry).widgetBackground(forceDark: entry.mixStyle != .plain)
         }
         .configurationDisplayName("자유 구성")
-        .description("칸 3개에 코인·국내주식·미국주식·환율을 골라 담아요. 길게 눌러 \u{201C}위젯 편집\u{201D}에서 바꿀 수 있어요.")
-        .supportedFamilies([.systemSmall])
+        .description("칸 3개에 코인·국내주식·미국주식·환율을 골라 담아요. 큰 위젯은 남는 줄을 앱 목록으로 채워요. 길게 눌러 \u{201C}위젯 편집\u{201D}에서 바꿀 수 있어요.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 
@@ -327,6 +669,37 @@ struct MixItem: Hashable {
     var icon: ItemIcon.Kind = .letter("")
     /// 가격 줄 후보 (넓은 것부터). 미국주식은 "$397.45 · 529,562원" → "$397.45 · 53만". 비면 [price].
     var priceVariants: [String] = []
+    /// 큰 위젯 목록의 이름 줄과 가격 아래 보조 값(미국주식 원화).
+    var name = ""
+    var sub: String? = nil
+
+    /// 홈 시안 목록 한 줄.
+    var homeItem: HomeItem {
+        HomeItem(icon: icon, symbol: symbol, name: name, price: price, listPrice: price, listSub: sub, change: change)
+    }
+
+    /// 화면 줄 수. 2×2 "줄마다 색"은 예전처럼 3칸, 그 밖에는 시안 목록 줄 수(이슈가 있으면 줄인다).
+    static func rowCount(_ family: WidgetFamily, style: MixBackground, hasIssue: Bool) -> Int {
+        if family == .systemSmall && style != .plain { return 3 }
+        return WidgetPaging.pageSize(family, layout: .list, hasIssue: hasIssue)
+    }
+
+    /// 보여줄 항목 id. 고른 칸을 먼저, 줄이 남으면 앱 목록에서 코인·주식·환율을 섞어 채운다
+    /// (5줄 2·2·1, 6줄 3·2·1, 8줄 3·3·2). 3줄이고 고른 칸이 있으면 고른 칸만.
+    static func ids(picked: [String], in s: Snapshot, count: Int) -> [String] {
+        if count <= 3 { return picked.isEmpty ? defaults(in: s) : picked }
+        let fxs = (s.fx.map { [$0] } ?? []) + (s.fxList ?? []).filter { $0.code != s.fx?.code }
+        let coins = s.coins.map { "coin:\($0.symbol)" }
+        let stocks = s.stocks.map { "stock:\($0.ticker)" } + (s.krStocks ?? []).map { "kr:\($0.code)" }
+        let fx = fxs.map { "fx:\($0.code)" }
+        let (c, st, f) = count >= 8 ? (3, 3, 2) : (count >= 6 ? (3, 2, 1) : (2, 2, 1))
+        var out = picked
+        for id in Array(coins.prefix(c)) + Array(stocks.prefix(st)) + Array(fx.prefix(f)) + coins + stocks + fx
+        where out.count < count && !out.contains(id) {
+            out.append(id)
+        }
+        return out
+    }
 
     static func resolve(_ id: String, in s: Snapshot) -> MixItem {
         let parts = id.split(separator: ":", maxSplits: 1).map(String.init)
@@ -337,12 +710,12 @@ struct MixItem: Hashable {
         case "coin":
             if let c = s.coins.first(where: { $0.symbol == key }) {
                 return MixItem(symbol: c.symbol, price: c.priceShort ?? Fmt.dropWon(c.price) ?? "—", change: c.change,
-                               icon: .coin(c.symbol))
+                               icon: .coin(c.symbol), name: c.name)
             }
         case "kr":
             if let k = (s.krStocks ?? []).first(where: { $0.code == key }) {
                 return MixItem(symbol: k.name, price: k.priceShort ?? Fmt.dropWon(k.price) ?? noPrice, change: k.change,
-                               icon: .stock(id: "kr-\(k.code)", letter: k.name))
+                               icon: .stock(id: "kr-\(k.code)", letter: k.name), name: k.code)
             }
         case "stock":
             if let st = s.stocks.first(where: { $0.ticker == key }) {
@@ -351,14 +724,15 @@ struct MixItem: Hashable {
                     ? [st.priceKrw, st.priceKrwShort].compactMap { $0 } : []
                 return MixItem(symbol: st.ticker, price: st.priceUsd ?? noPrice, change: st.change,
                                icon: .stock(id: "us-\(st.ticker)", letter: st.ticker),
-                               priceVariants: krw.map { "\(st.priceUsd!) · \($0)" })
+                               priceVariants: krw.map { "\(st.priceUsd!) · \($0)" },
+                               name: st.name, sub: krw.first)
             }
         case "fx":
             let fxs = s.fxList ?? (s.fx.map { [$0] } ?? [])
             if let fx = fxs.first(where: { $0.code == key }) {
                 return MixItem(symbol: fx.unit == 1 ? fx.code : "\(fx.unit)\(fx.code)",
                                price: Fmt.dropWon(fx.rate) ?? "—", change: fx.change,
-                               icon: .flag(fx.code))
+                               icon: .flag(fx.code), name: fx.name)
             }
         default: break
         }
@@ -376,15 +750,19 @@ struct MixItem: Hashable {
 
 struct MixWidgetView: View {
     let entry: SnapshotEntry
+    @Environment(\.widgetFamily) private var family
 
     var body: some View {
         if let snap = entry.snapshot {
             let picked = entry.selected.compactMap { $0 }
-            let ids = picked.isEmpty ? MixItem.defaults(in: snap) : picked
-            let items = ids.map { MixItem.resolve($0, in: snap) }
+            let count = MixItem.rowCount(family, style: entry.mixStyle, hasIssue: snap.issue != nil)
+            let items = MixItem.ids(picked: picked, in: snap, count: count).map { MixItem.resolve($0, in: snap) }
             let scheme = snap.settings.colorScheme
             if items.isEmpty {
                 EmptyHint(title: "자유 구성", message: "앱에서 코인·종목·환율을 추가하세요")
+            } else if family != .systemSmall || entry.mixStyle == .plain {
+                // 시안 목록 (2×2 기본, 4×2·4×4). 줄마다 색은 2×2에서만.
+                HomeCard(title: "자유 구성", snapshot: snap, items: items.map(\.homeItem), layout: .list)
             } else if entry.mixStyle != .plain {
                 // 줄마다 색: 줄 여백 때문에 제목 줄은 빼고, 갱신 시각은 맨 아래에 작게 둔다.
                 VStack(alignment: .leading, spacing: 4) {
@@ -631,5 +1009,21 @@ private let changeOnlyEntry = SnapshotEntry(date: .now, snapshot: .placeholder, 
     SnapshotEntry(date: .now, snapshot: .placeholder, selected: ["coin:ETH", nil, "coin:NONE"])
 }
 #Preview("AI 이슈 · 홈 2×2", as: .systemSmall) { IssueWidget() } timeline: { previewEntry; emptyEntry }
+
+// 홈 시안: 한 종목 / 목록 × 이슈 있음(placeholder) / 없음. 라이트·다크는 Canvas의 설정에서 바꿔 본다.
+private let noIssue: Snapshot = { var s = Snapshot.placeholder; s.issue = nil; return s }()
+private let single = SnapshotEntry(date: .now, snapshot: .placeholder, layout: .single, pagingId: "preview")
+private let singleNoIssue = SnapshotEntry(date: .now, snapshot: noIssue, layout: .single, pagingId: "preview")
+private let list = SnapshotEntry(date: .now, snapshot: .placeholder, layout: .list, pagingId: "preview")
+private let listNoIssue = SnapshotEntry(date: .now, snapshot: noIssue, layout: .list)
+#Preview("코인 · 홈 2×2 시안", as: .systemSmall) { CoinWidget() } timeline: { single; singleNoIssue; list; listNoIssue }
+#Preview("코인 · 홈 4×2", as: .systemMedium) { CoinWidget() } timeline: { single; singleNoIssue; list; listNoIssue; emptyEntry }
+#Preview("코인 · 홈 4×4", as: .systemLarge) { CoinWidget() } timeline: { single; singleNoIssue; list; listNoIssue }
+#Preview("미국주식 · 홈 4×2", as: .systemMedium) { StockWidget() } timeline: { single; list; emptyEntry }
+#Preview("미국주식 · 홈 4×4", as: .systemLarge) { StockWidget() } timeline: { single; list }
+#Preview("환율 · 홈 4×2", as: .systemMedium) { FxWidget() } timeline: { single; list; emptyEntry }
+#Preview("환율 · 홈 4×4", as: .systemLarge) { FxWidget() } timeline: { single; listNoIssue }
+#Preview("자유 구성 · 홈 4×2", as: .systemMedium) { MixWidget() } timeline: { previewEntry; listNoIssue }
+#Preview("자유 구성 · 홈 4×4", as: .systemLarge) { MixWidget() } timeline: { previewEntry; listNoIssue }
 
 #endif

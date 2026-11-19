@@ -54,7 +54,9 @@ enum LiveQuotes {
         return URLSession(configuration: c)
     }()
 
-    static func refresh(_ snap: Snapshot, parts: Set<QuotePart>) async -> Snapshot {
+    /// [also]: 같이 받되 갱신 시각 판단에는 넣지 않는 묶음 (홈 위젯 아래 "어제 이슈" 줄).
+    static func refresh(_ snap: Snapshot, parts wanted: Set<QuotePart>, also: Set<QuotePart> = []) async -> Snapshot {
+        let parts = wanted.union(also)
         var s = snap
         let coinSymbols = s.coins.map(\.symbol)
         let fxCodes = Array(Set((s.fxList ?? []).map(\.code) + [s.fx?.code, "USD"].compactMap { $0 })).sorted()
@@ -117,7 +119,7 @@ enum LiveQuotes {
             .coins: coins.isFresh, .stocks: stocks.isFresh,
             .fx: server.isFresh, .issue: server.isFresh,
         ]
-        if !parts.isEmpty, parts.allSatisfy({ fresh[$0] ?? true }) {
+        if !wanted.isEmpty, wanted.allSatisfy({ fresh[$0] ?? true }) {
             s.updatedAt = Date()
         }
         return s
