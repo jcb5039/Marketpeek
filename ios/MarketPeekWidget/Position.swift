@@ -18,6 +18,24 @@ enum LogoBackground: String, AppEnum {
     ]
 }
 
+/// 홈 위젯 모양. 한 종목은 다음 버튼이 다음 종목으로, 목록은 다음 묶음으로 넘긴다(Shared.swift `WidgetPaging`).
+/// "크기에 맞게"는 2×2는 한 종목, 4×2·4×4는 목록.
+enum HomeLayout: String, AppEnum {
+    case auto, single, list
+
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "모양"
+    static let caseDisplayRepresentations: [HomeLayout: DisplayRepresentation] = [
+        .auto: "크기에 맞게",
+        .single: "한 종목",
+        .list: "목록",
+    ]
+
+    func resolved(for family: WidgetFamily) -> HomeLayout {
+        guard self == .auto else { return self }
+        return family == .systemMedium || family == .systemLarge ? .list : .single
+    }
+}
+
 // MARK: - 종목 고르기 (이름으로)
 // 후보는 앱이 써둔 스냅샷의 홈 목록(앞 6개, Dart AppState.maxWidgetItems)이다.
 // 고른 종목이 목록에서 몇 번째인지를 offset으로 바꿔 쓴다. 잠금화면 사각형은 그 종목부터 여러 줄을 보여준다.
@@ -82,12 +100,15 @@ private func listOffset(of id: String?, in ids: [String]) -> Int {
 
 struct ListPositionIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "미국주식 위젯"
-    static let description = IntentDescription("보여줄 종목과 배경을 골라요. 배경은 홈 화면 2×2에만 적용돼요.")
+    static let description = IntentDescription("보여줄 종목, 홈 화면 모양과 배경을 골라요. 배경은 홈 화면 한 종목 모양에만 적용돼요.")
 
     @Parameter(title: "종목 선택")
     var stock: StockPick?
 
-    @Parameter(title: "배경 선택", default: .watermark)
+    @Parameter(title: "모양", default: .auto)
+    var layout: HomeLayout
+
+    @Parameter(title: "배경 선택", default: .plain)
     var background: LogoBackground
 
     init() {}
@@ -103,20 +124,93 @@ struct PositionProvider: AppIntentTimelineProvider {
     }
 
     func snapshot(for configuration: ListPositionIntent, in context: Context) async -> SnapshotEntry {
-        .current(isPreview: context.isPreview, offset: configuration.offset,
-                 background: configuration.background)
+        let layout = configuration.layout.resolved(for: context.family)
+        return .current(isPreview: context.isPreview, offset: configuration.offset,
+                        background: homeBackground(configuration.background, layout: layout), layout: layout)
     }
 
     func timeline(for configuration: ListPositionIntent, in context: Context) async -> Timeline<SnapshotEntry> {
-        let offset = configuration.offset
-        // 홈 화면 2×2만 로고를 보여주므로 그때만 받는다.
-        let wantsLogo = context.family == .systemSmall
+        let family = context.family
+        let p = WidgetPaging.plan(kind: "StockWidget", family: family, layout: configuration.layout,
+                                  baseId: configuration.stock?.id ?? "", base: configuration.offset,
+                                  snapshot: Snapshot.load(), count: { $0.stocks.count })
+        // 홈 화면만 로고를 보여주므로 그때만, 화면에 보일 수 있는 종목 것만 받는다.
         return await SnapshotEntry.timeline(parts: { _ in [.stocks] }, markets: { _ in [.us] },
-                                            offset: offset, background: configuration.background,
+                                            offset: p.offset,
+                                            background: homeBackground(configuration.background, layout: p.layout),
+                                            layout: p.layout, pagingId: p.pagingId,
+                                            withIssue: WidgetPaging.isHome(family),
+                                            chart: WidgetPaging.isHome(family) && p.layout == .single
+                                                ? { snap in
+                                                    // 화면에 보이는 종목 하나의 장중 차트만 받는다(증권사 연결 필요).
+                                                    guard snap.stocks.indices.contains(p.offset) else { return nil }
+                                                    let st = snap.stocks[p.offset]
+                                                    return await LiveQuotes.stockChart(st.ticker, excd: st.excd,
+                                                                                       preferCache: WidgetCache.recentlyNavigated)
+                                                } : nil,
                                             logos: { snap in
-            guard wantsLogo, let st = snap.stocks.dropFirst(offset).first else { return [] }
-            return ["stock:\(st.ticker)"]
+            guard WidgetPaging.isHome(family) else { return [] }
+            return WidgetPaging.window(snap.stocks, start: p.offset,
+                                       size: WidgetPaging.pageSize(family, layout: p.layout, hasIssue: false))
+                .map { "stock:\($0.ticker)" }
         })
+    }
+}
+
+// MARK: - 환율 위젯 편집: 모양
+
+struct FxWidgetIntent: WidgetConfigurationIntent {
+    static let title: LocalizedStringResource = "환율 위젯"
+    static let description = IntentDescription("홈 화면 모양과 배경을 골라요. 통화는 앱에서 고르고, › 버튼으로 다음 통화를 봐요. 배경은 한 종목 모양에만 적용돼요.")
+
+    @Parameter(title: "모양", default: .auto)
+    var layout: HomeLayout
+
+    @Parameter(title: "배경 선택", default: .plain)
+    var background: LogoBackground
+
+    init() {}
+}
+
+/// 환율: 앱에서 고른 통화(fxList) 중 대표 통화(fx)부터, 다음 버튼을 누른 만큼 넘긴다.
+struct FxProvider: AppIntentTimelineProvider {
+    func placeholder(in context: Context) -> SnapshotEntry {
+        SnapshotEntry(date: .now, snapshot: .placeholder)
+    }
+
+    func snapshot(for configuration: FxWidgetIntent, in context: Context) async -> SnapshotEntry {
+        let layout = configuration.layout.resolved(for: context.family)
+        let entry = SnapshotEntry.current(isPreview: context.isPreview,
+                                          background: homeBackground(configuration.background, layout: layout),
+                                          layout: layout)
+        var e = entry
+        e.offset = Self.base(entry.snapshot)
+        return e
+    }
+
+    func timeline(for configuration: FxWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
+        let snap = Snapshot.load()
+        let p = WidgetPaging.plan(kind: "FxWidget", family: context.family, layout: configuration.layout,
+                                  baseId: snap?.fx?.code ?? "", base: Self.base(snap),
+                                  snapshot: snap, count: { $0.fxList?.count ?? 0 })
+        return await SnapshotEntry.timeline(parts: { _ in [.fx] }, offset: p.offset,
+                                            background: homeBackground(configuration.background, layout: p.layout),
+                                            layout: p.layout,
+                                            pagingId: p.pagingId, withIssue: WidgetPaging.isHome(context.family),
+                                            chart: WidgetPaging.isHome(context.family) && p.layout == .single
+                                                ? { snap in
+                                                    // 화면에 보이는 통화 하나의 30영업일 차트만 받는다.
+                                                    let codes = (snap.fxList ?? []).map(\.code)
+                                                    guard let code = codes.isEmpty ? snap.fx?.code
+                                                            : codes[p.offset % codes.count] else { return nil }
+                                                    return await LiveQuotes.fxChart(code, base: snap.settings.apiBaseUrl,
+                                                                                    preferCache: WidgetCache.recentlyNavigated)
+                                                } : nil)
+    }
+
+    static func base(_ snap: Snapshot?) -> Int {
+        let codes = (snap?.fxList ?? []).map(\.code)
+        return snap?.fx.flatMap { codes.firstIndex(of: $0.code) } ?? 0
     }
 }
 
@@ -134,15 +228,18 @@ enum CoinDisplayStyle: String, AppEnum {
 
 struct CoinWidgetIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "코인 위젯"
-    static let description = IntentDescription("보여줄 코인과 정보, 배경을 골라요. 표시 정보는 사각형 위젯에만, 배경은 홈 화면 2×2에만 적용돼요.")
+    static let description = IntentDescription("보여줄 코인과 정보, 홈 화면 모양과 배경을 골라요. 표시 정보는 잠금화면 사각형에만, 배경은 홈 화면 한 종목 모양에만 적용돼요.")
 
     @Parameter(title: "코인 선택")
     var coin: CoinPick?
 
+    @Parameter(title: "모양", default: .auto)
+    var layout: HomeLayout
+
     @Parameter(title: "표시 정보", default: .prices)
     var style: CoinDisplayStyle
 
-    @Parameter(title: "배경 선택", default: .watermark)
+    @Parameter(title: "배경 선택", default: .plain)
     var background: LogoBackground
 
     init() {}
@@ -158,14 +255,28 @@ struct CoinProvider: AppIntentTimelineProvider {
     }
 
     func snapshot(for configuration: CoinWidgetIntent, in context: Context) async -> SnapshotEntry {
-        .current(isPreview: context.isPreview, offset: configuration.offset,
-                 changeOnly: configuration.style == .changeOnly, background: configuration.background)
+        let layout = configuration.layout.resolved(for: context.family)
+        return .current(isPreview: context.isPreview, offset: configuration.offset,
+                        changeOnly: configuration.style == .changeOnly,
+                        background: homeBackground(configuration.background, layout: layout), layout: layout)
     }
 
     func timeline(for configuration: CoinWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
-        await SnapshotEntry.timeline(parts: { _ in [.coins] }, offset: configuration.offset,
-                                     changeOnly: configuration.style == .changeOnly,
-                                     background: configuration.background)
+        let p = WidgetPaging.plan(kind: "CoinWidget", family: context.family, layout: configuration.layout,
+                                  baseId: configuration.coin?.id ?? "", base: configuration.offset,
+                                  snapshot: Snapshot.load(), count: { $0.coins.count })
+        return await SnapshotEntry.timeline(parts: { _ in [.coins] }, offset: p.offset,
+                                            changeOnly: configuration.style == .changeOnly,
+                                            background: homeBackground(configuration.background, layout: p.layout),
+                                            layout: p.layout, pagingId: p.pagingId,
+                                            withIssue: WidgetPaging.isHome(context.family),
+                                            chart: WidgetPaging.isHome(context.family) && p.layout == .single
+                                                ? { snap in
+                                                    // 화면에 보이는 코인 하나의 24시간 차트만 받는다.
+                                                    guard snap.coins.indices.contains(p.offset) else { return nil }
+                                                    return await LiveQuotes.coinChart(snap.coins[p.offset].symbol,
+                                                                                  preferCache: WidgetCache.recentlyNavigated)
+                                                } : nil)
     }
 }
 
@@ -255,7 +366,11 @@ struct MixProvider: AppIntentTimelineProvider {
 
     func timeline(for configuration: MixWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
         let picked = configuration.selected.compactMap { $0 }
-        let ids = { (snap: Snapshot) in picked.isEmpty ? MixItem.defaults(in: snap) : picked }
+        let family = context.family, style = configuration.background
+        // 화면에 보일 수 있는 항목(이슈 없을 때 줄 수 기준)의 묶음과 로고만 받는다.
+        let ids = { (snap: Snapshot) in
+            MixItem.ids(picked: picked, in: snap, count: MixItem.rowCount(family, style: style, hasIssue: false))
+        }
         return await SnapshotEntry.timeline(parts: { snap in
             // 칸에 실제로 보이는 항목의 묶음만 받는다 (안 고르면 기본 항목).
             Set(ids(snap).compactMap(QuotePart.of(itemId:)))
@@ -264,6 +379,6 @@ struct MixProvider: AppIntentTimelineProvider {
                 id.hasPrefix("kr:") ? .kr : (id.hasPrefix("stock:") ? .us : nil)
             })
         }, selected: configuration.selected, mixStyle: configuration.background,
-        logos: { snap in picked.isEmpty ? MixItem.defaults(in: snap) : picked })
+        withIssue: true, logos: ids)
     }
 }

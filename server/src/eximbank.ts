@@ -50,6 +50,22 @@ export async function fetchFx(
   return out;
 }
 
+/// 하루치 고시 환율을 앱 통화 코드로 (JPY·IDR은 100 단위). 고시가 없는 날(주말·공휴일·고시 전)은 빈 객체.
+export async function fetchDayRates(
+  codes: string[],
+  yyyymmdd: string,
+  apiKey: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<Record<string, number>> {
+  const day = await fetchDay(yyyymmdd, apiKey, fetchFn);
+  const out: Record<string, number> = {};
+  for (const code of codes) {
+    const rate = day.get(EXIM_CODE[code] ?? code);
+    if (rate != null) out[code] = rate;
+  }
+  return out;
+}
+
 async function fetchDay(
   yyyymmdd: string,
   apiKey: string,

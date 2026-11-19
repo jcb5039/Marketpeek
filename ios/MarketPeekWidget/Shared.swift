@@ -18,6 +18,12 @@ struct SnapshotEntry: TimelineEntry {
     var background: LogoBackground = .plain
     /// 자유 구성 위젯 배경. 자유 구성 위젯 편집에서 고른다.
     var mixStyle: MixBackground = .plain
+    /// 홈 위젯 모양(한 종목 / 목록). 위젯 편집 "모양"을 크기에 맞게 풀어 둔 값([HomeLayout.resolved]).
+    var layout: HomeLayout = .single
+    /// 다음 버튼(>)이 쓰는 이름표([WidgetPaging]). nil이면 버튼 없음(잠금화면, 한 화면에 다 들어갈 때).
+    var pagingId: String? = nil
+    /// 한 종목 모양 홈 위젯의 차트 선 (오래된 가격부터). nil이면 차트 없이 그린다.
+    var chart: PriceChart? = nil
 }
 
 extension SnapshotEntry {
@@ -31,8 +37,11 @@ extension SnapshotEntry {
                          offset: Int = 0, changeOnly: Bool = false,
                          selected: [String?] = [], background: LogoBackground = .plain,
                          mixStyle: MixBackground = .plain,
+                         layout: HomeLayout = .single, pagingId: String? = nil, withIssue: Bool = false,
+                         chart: ((Snapshot) async -> PriceChart?)? = nil,
                          logos: (Snapshot) -> [String] = { _ in [] }) async -> Timeline<SnapshotEntry> {
         var snap = Snapshot.load()
+        var points: PriceChart? = nil
         var wanted: Set<QuotePart> = []
         var stockMarkets: Set<StockMarket> = []
         if let s = snap {
@@ -41,30 +50,47 @@ extension SnapshotEntry {
             // 주식 로고(자유 구성)는 시세와 동시에 받는다. 둘 다 끝난 뒤 엔트리를 만든다.
             let logoIds = logos(s)
             async let logoDone: Void = StockLogos.prefetch(itemIds: logoIds)
-            snap = await LiveQuotes.refresh(s, parts: wanted)
+            // 차트도 시세와 동시에 받는다. 실패해도 시세·갱신 시각에는 영향이 없다.
+            async let chartDone: PriceChart? = loadChart(chart, s)
+            let also: Set<QuotePart> = withIssue ? [.issue] : []
+            if WidgetCache.recentlyNavigated {
+                // 다음 버튼(›) 직후: 인터넷을 기다리지 않고 저장해 둔 값으로 바로 그린다.
+                snap = WidgetCache.apply(to: s, parts: wanted.union(also))
+            } else {
+                // 홈 위젯 아래 "어제 이슈" 줄: 같이 받되 갱신 시각은 시세 기준으로만 바꾼다.
+                let r = await LiveQuotes.refreshDetailed(s, parts: wanted, also: also)
+                snap = r.snapshot
+                WidgetCache.save(r.snapshot, received: r.received)
+            }
             await logoDone
+            points = await chartDone
         }
         let now = Date()
         let minutes = Array(0..<60) + Array(stride(from: 60, to: 360, by: 10))
         let entries = minutes.map { m in
             SnapshotEntry(date: now.addingTimeInterval(Double(m) * 60), snapshot: snap,
                           offset: offset, changeOnly: changeOnly, selected: selected, background: background,
-                          mixStyle: mixStyle)
+                          mixStyle: mixStyle, layout: layout, pagingId: pagingId, chart: points)
         }
         let after = ReloadPlan.interval(parts: wanted, markets: stockMarkets, now: now)
         return Timeline(entries: entries, policy: .after(now.addingTimeInterval(after)))
     }
 
+    private static func loadChart(_ load: ((Snapshot) async -> PriceChart?)?, _ s: Snapshot) async -> PriceChart? {
+        guard let load else { return nil }
+        return await load(s)
+    }
+
     static func current(isPreview: Bool, offset: Int = 0, changeOnly: Bool = false,
                         selected: [String?] = [], background: LogoBackground = .plain,
-                        mixStyle: MixBackground = .plain) -> SnapshotEntry {
+                        mixStyle: MixBackground = .plain, layout: HomeLayout = .single) -> SnapshotEntry {
         let snap = isPreview ? (Snapshot.load() ?? .placeholder) : Snapshot.load()
         return SnapshotEntry(date: .now, snapshot: snap, offset: offset, changeOnly: changeOnly,
-                             selected: selected, background: background, mixStyle: mixStyle)
+                             selected: selected, background: background, mixStyle: mixStyle, layout: layout)
     }
 }
 
-/// 위젯 편집이 없는 위젯(환율·AI 이슈)의 타임라인 공급자. [part] 시세를 직접 받아온다.
+/// 위젯 편집이 없는 위젯(AI 이슈)의 타임라인 공급자. [part] 시세를 직접 받아온다.
 /// iOS가 실제 갱신 시점을 결정하므로 "15분마다" 같은 보장 표현은 쓰지 않는다.
 struct SnapshotProvider: TimelineProvider {
     let part: QuotePart
@@ -81,6 +107,283 @@ struct SnapshotProvider: TimelineProvider {
         let part = part
         Task { completion(await SnapshotEntry.timeline(parts: { _ in [part] })) }
     }
+}
+
+// MARK: - 다음 버튼 (>)
+
+/// 홈 화면 위젯의 다음 버튼(>) 상태. 누른 횟수를 App Group에 "위젯 종류·크기·고른 종목"별로 저장하고,
+/// 타임라인을 만들 때 "고른 종목 위치 + 누른 횟수 × 한 화면 개수"부터 보여준다. 끝을 지나면 처음으로 돌아간다.
+/// iOS는 같은 위젯 여러 개를 구분할 이름을 주지 않으므로, 종류·크기·고른 종목이 같은 위젯은 함께 넘어간다.
+enum WidgetPaging {
+    private static let storeKey = "widget.paging"
+    private static var store: UserDefaults? { UserDefaults(suiteName: Snapshot.appGroupId) }
+
+    static func isHome(_ family: WidgetFamily) -> Bool {
+        family == .systemSmall || family == .systemMedium || family == .systemLarge
+    }
+
+    /// 한 화면에 보이는 종목 수 = 다음 버튼이 한 번에 넘기는 수. 목록은 아래 "어제 이슈" 줄이 있으면 줄을 줄인다.
+    /// [layout]은 크기에 맞게 풀어 둔 값(한 종목 / 목록).
+    static func pageSize(_ family: WidgetFamily, layout: HomeLayout, hasIssue: Bool) -> Int {
+        guard isHome(family), layout == .list else { return 1 }
+        switch family {
+        case .systemSmall: return hasIssue ? 3 : 5
+        case .systemMedium: return 6
+        default: return hasIssue ? 6 : 8
+        }
+    }
+
+    struct Plan {
+        var offset: Int
+        var pagingId: String?
+        /// 크기에 맞게 풀어 둔 모양
+        var layout: HomeLayout
+    }
+
+    /// 이번에 보여줄 첫 위치와 다음 버튼 이름표. 잠금화면이거나 한 화면에 다 들어가면 버튼 없이 [base]부터.
+    /// 이슈 유무는 앱이 써둔 스냅샷 기준이라, 위젯이 새로 받은 뒤 바뀌면 한 번은 넘기는 수가 화면과 다를 수 있다.
+    static func plan(kind: String, family: WidgetFamily, layout: HomeLayout,
+                     baseId: String, base: Int, snapshot: Snapshot?, count: (Snapshot) -> Int) -> Plan {
+        let resolved = layout.resolved(for: family)
+        guard let snapshot else { return Plan(offset: base, layout: resolved) }
+        let n = count(snapshot)
+        let size = pageSize(family, layout: resolved, hasIssue: snapshot.issue != nil)
+        guard isHome(family), n > size else { return Plan(offset: base, layout: resolved) }
+        let id = "\(kind)|\(family)|\(baseId)"
+        // 이전 버튼으로 횟수가 음수가 될 수 있어 0..<n으로 맞춘다.
+        let raw = (base + steps(id) * size) % n
+        return Plan(offset: (raw + n) % n, pagingId: id, layout: resolved)
+    }
+
+    static func steps(_ id: String) -> Int {
+        (store?.dictionary(forKey: storeKey)?[id] as? Int) ?? 0
+    }
+
+    /// [by]: 다음 +1, 이전 −1.
+    static func advance(_ id: String, by: Int = 1) {
+        guard let store else { return }
+        var all = store.dictionary(forKey: storeKey) ?? [:]
+        all[id] = (((all[id] as? Int) ?? 0) + by) % 10_000
+        store.set(all, forKey: storeKey)
+    }
+
+    /// [items]를 [start]부터 [size]개. 끝을 지나면 처음부터 이어 붙인다.
+    static func window<T>(_ items: [T], start: Int, size: Int) -> [T] {
+        guard !items.isEmpty else { return [] }
+        return (0..<min(size, items.count)).map { items[(start + $0) % items.count] }
+    }
+}
+
+/// 다음(›)·이전(‹) 버튼을 누르면 횟수만 바꾼다. 그 위젯의 타임라인은 WidgetKit이 다시 만든다(↻와 같은 방식).
+struct NextItemIntent: AppIntent {
+    static let title: LocalizedStringResource = "다음 종목"
+    static let isDiscoverable = false
+
+    @Parameter(title: "위젯")
+    var pagingId: String
+
+    /// 다음 +1, 이전 −1
+    @Parameter(title: "방향", default: 1)
+    var step: Int
+
+    init() {}
+    init(pagingId: String, step: Int = 1) {
+        self.pagingId = pagingId
+        self.step = step
+    }
+
+    func perform() async throws -> some IntentResult {
+        WidgetCache.markNavigated()
+        WidgetPaging.advance(pagingId, by: step)
+        return .result()
+    }
+}
+
+/// 홈 화면 위젯 제목 줄 맨 오른쪽의 이전(‹)·다음(›) 버튼
+struct PageButtons: View {
+    let pagingId: String
+
+    var body: some View {
+        NextButton(pagingId: pagingId, step: -1)
+        NextButton(pagingId: pagingId)
+    }
+}
+
+struct NextButton: View {
+    let pagingId: String
+    var step = 1
+    @Environment(\.widgetFamily) private var family
+
+    var body: some View {
+        Button(intent: NextItemIntent(pagingId: pagingId, step: step)) {
+            HeaderButtonIcon(systemName: step < 0 ? "chevron.left" : "chevron.right", family: family)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+    }
+}
+
+/// 제목 줄 버튼(↻ ›) 아이콘. 누르기 쉽게 크게, 누르는 영역은 아이콘보다 넓게. 2×2는 공간이 좁아 조금 작게.
+struct HeaderButtonIcon: View {
+    let systemName: String
+    let family: WidgetFamily
+
+    var body: some View {
+        let small = family == .systemSmall
+        Image(systemName: systemName)
+            .font(.system(size: small ? 13 : 16, weight: .semibold))
+            .frame(width: small ? 24 : 30, height: small ? 22 : 26)
+            .contentShape(Rectangle())
+    }
+}
+
+// MARK: - 위젯 캐시 (마지막으로 받은 시세·차트)
+
+/// 위젯이 마지막으로 새로 받은 시세·차트. 앱 스냅샷("snapshot")과 다른 키에 저장해 서로 덮어쓰지 않는다.
+/// 다음 버튼(›)을 누른 직후에는 인터넷을 기다리지 않고 이 값으로 바로 그린다.
+/// 실제로 새로 받은 묶음만 저장하므로 실패한 묶음의 오래된 값이 "방금 받은 값"이 되지 않는다.
+enum WidgetCache {
+    private static let quotesKey = "widget.cache.quotes"
+    private static let chartPrefix = "widget.cache.chart."
+    private static let navKey = "widget.lastNav"
+    /// 다음 버튼을 누른 뒤 이 시간 안에 만드는 타임라인은 저장값으로 그린다.
+    static let navWindow: TimeInterval = 10
+    private static var store: UserDefaults? { UserDefaults(suiteName: Snapshot.appGroupId) }
+
+    struct Quotes: Codable {
+        var coins: [String: Snapshot.Coin] = [:]
+        var stocks: [String: Snapshot.Stock] = [:]
+        var krStocks: [String: Snapshot.KrStock] = [:]
+        var fx: [String: Snapshot.Fx] = [:]
+        var usdKrw: Double?
+        var issue: Snapshot.Issue?
+        /// 묶음별로 마지막으로 새로 받은 시각 ("coins", "stocks", "fx", "issue")
+        var at: [String: Date] = [:]
+    }
+
+    static func markNavigated() {
+        store?.set(Date().timeIntervalSince1970, forKey: navKey)
+    }
+
+    static func clearNavigated() {
+        store?.removeObject(forKey: navKey)
+    }
+
+    static var recentlyNavigated: Bool {
+        guard let t = store?.object(forKey: navKey) as? Double else { return false }
+        return Date().timeIntervalSince1970 - t < navWindow
+    }
+
+    private static func name(_ p: QuotePart) -> String {
+        switch p {
+        case .coins: "coins"
+        case .stocks: "stocks"
+        case .fx: "fx"
+        case .issue: "issue"
+        }
+    }
+
+    /// 새로 받은 묶음([received])의 값만 저장한다.
+    static func save(_ s: Snapshot, received: Set<QuotePart>) {
+        guard !received.isEmpty else { return }
+        var q = read(Quotes.self, quotesKey) ?? Quotes()
+        if received.contains(.coins) { for c in s.coins { q.coins[c.symbol] = c } }
+        if received.contains(.stocks) {
+            for st in s.stocks { q.stocks[st.ticker] = st }
+            for k in s.krStocks ?? [] { q.krStocks[k.code] = k }
+        }
+        if received.contains(.fx) {
+            for f in (s.fxList ?? []) + (s.fx.map { [$0] } ?? []) { q.fx[f.code] = f }
+            if let u = s.usdKrw { q.usdKrw = u }
+        }
+        if received.contains(.issue) { q.issue = s.issue }
+        let now = Date()
+        for p in received { q.at[name(p)] = now }
+        write(q, quotesKey)
+    }
+
+    /// 앱 스냅샷(목록·설정)에 저장해 둔 값을 덮는다. 앱이 더 최근에 쓴 묶음은 앱 값을 그대로 둔다.
+    /// 갱신 시각은 이 위젯의 시세 묶음을 모두 저장값으로 덮었을 때 그중 가장 오래된 저장 시각이 된다.
+    static func apply(to app: Snapshot, parts: Set<QuotePart>) -> Snapshot {
+        guard let q = read(Quotes.self, quotesKey) else { return app }
+        var s = app
+        let appAt = app.updatedAt ?? .distantPast
+        func newer(_ p: QuotePart) -> Date? {
+            guard parts.contains(p), let t = q.at[name(p)], t > appAt else { return nil }
+            return t
+        }
+        var times: [Date] = []
+        if let t = newer(.coins) {
+            for i in s.coins.indices {
+                guard let c = q.coins[s.coins[i].symbol] else { continue }
+                s.coins[i].price = c.price; s.coins[i].priceShort = c.priceShort; s.coins[i].change = c.change
+            }
+            times.append(t)
+        }
+        if let t = newer(.stocks) {
+            for i in s.stocks.indices {
+                guard let c = q.stocks[s.stocks[i].ticker] else { continue }
+                s.stocks[i].priceUsd = c.priceUsd; s.stocks[i].priceKrw = c.priceKrw
+                s.stocks[i].priceKrwShort = c.priceKrwShort; s.stocks[i].change = c.change
+            }
+            if var list = s.krStocks {
+                for i in list.indices {
+                    guard let c = q.krStocks[list[i].code] else { continue }
+                    list[i].price = c.price; list[i].priceShort = c.priceShort; list[i].change = c.change
+                }
+                s.krStocks = list
+            }
+            times.append(t)
+        }
+        if let t = newer(.fx) {
+            func fill(_ f: inout Snapshot.Fx) {
+                guard let c = q.fx[f.code] else { return }
+                f.rate = c.rate; f.change = c.change
+            }
+            if var f = s.fx { fill(&f); s.fx = f }
+            if var list = s.fxList {
+                for i in list.indices { fill(&list[i]) }
+                s.fxList = list
+            }
+            if let u = q.usdKrw { s.usdKrw = u }
+            times.append(t)
+        }
+        if newer(.issue) != nil { s.issue = q.issue }
+        let main = parts.subtracting([.issue])
+        if !main.isEmpty, times.count == main.count, let oldest = times.min() { s.updatedAt = oldest }
+        return s
+    }
+
+    static func chart(_ key: String) -> PriceChart? { read(PriceChart.self, chartPrefix + key) }
+
+    static func saveChart(_ chart: PriceChart, key: String) { write(chart, chartPrefix + key) }
+
+    private static func read<T: Decodable>(_ type: T.Type, _ key: String) -> T? {
+        guard let data = store?.data(forKey: key) else { return nil }
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .secondsSince1970
+        return try? d.decode(type, from: data)
+    }
+
+    private static func write<T: Encodable>(_ value: T, _ key: String) {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .secondsSince1970
+        guard let data = try? e.encode(value) else { return }
+        store?.set(data, forKey: key)
+    }
+}
+
+/// 목록 모양이면 로고 배경을 깔지 않는다(한 종목 로고가 목록 전체에 깔리지 않게). [layout]은 풀어 둔 값.
+func homeBackground(_ bg: LogoBackground, layout: HomeLayout) -> LogoBackground {
+    layout == .list ? .plain : bg
+}
+
+/// 홈 위젯 시안(라이트·다크) 색. iOS 다크 모드 설정을 따라간다.
+enum HomePalette {
+    static let card = Color(UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1) : .white })
+    static let line = Color(UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(white: 1, alpha: 0.12) : UIColor(white: 0, alpha: 0.08) })
 }
 
 /// 다음 타임라인을 언제 다시 받아 달라고 요청할지. iOS는 위젯마다 하루 갱신 횟수를 제한하므로
@@ -111,21 +414,28 @@ enum ReloadPlan {
     }
 }
 
-/// 홈 화면 위젯의 새로고침 버튼(↻). 버튼을 누르면 iOS가 그 위젯의 타임라인을 다시 만들어
-/// 앱을 열지 않고 시세를 새로 받는다. 할 일은 없고, 다시 만드는 건 WidgetKit이 한다.
+/// 홈 화면 위젯의 새로고침 버튼(↻). 누른 위젯뿐 아니라 MarketPeek 위젯 전체(코인·주식·환율·이슈·자유 구성)를
+/// 다시 만들어 달라고 iOS에 요청해, 앱을 열지 않고 모든 시세를 새로 받는다(실제 시점은 iOS가 정한다).
+/// 다음·이전 버튼 직후의 "저장값으로 그리기"는 풀어서 인터넷에서 새로 받게 한다.
 /// 60초 안에 다시 누르면 같은 요청을 재사용(LiveQuotes Reuse)해 값이 그대로일 수 있다.
 struct RefreshQuotesIntent: AppIntent {
     static let title: LocalizedStringResource = "시세 새로고침"
     static let isDiscoverable = false
 
-    func perform() async throws -> some IntentResult { .result() }
+    func perform() async throws -> some IntentResult {
+        WidgetCache.clearNavigated()
+        WidgetCenter.shared.reloadAllTimelines()
+        return .result()
+    }
 }
 
 /// 홈 화면 위젯의 새로고침 버튼 ↻ (제목 줄, 자유 구성 아래 줄).
 struct RefreshButton: View {
+    @Environment(\.widgetFamily) private var family
+
     var body: some View {
         Button(intent: RefreshQuotesIntent()) {
-            Image(systemName: "arrow.clockwise").font(.caption2.weight(.semibold))
+            HeaderButtonIcon(systemName: "arrow.clockwise", family: family)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
@@ -274,20 +584,23 @@ extension View {
 }
 
 /// 위젯 공통 헤더.
-/// - 홈 화면: 제목 없이 오른쪽에 "최근 업데이트: 15:30 ↻" (↻ 새로고침 버튼)
+/// - 홈 2×2: 제목 없이 오른쪽에 "최근 업데이트: 15:30 ↻ ›" (↻ 새로고침, › 다음 버튼)
+/// - 홈 4×2·4×4: 왼쪽에 제목, 오른쪽은 2×2와 같다
 /// - 잠금화면: "코인 ········ 3분 전"
 struct WidgetHeader: View {
     let title: String
     let snapshot: Snapshot
     /// 엔트리 시각. 잠금화면의 "N분 전"을 이 시각 기준으로 계산한다.
     let now: Date
+    /// 다음 버튼(>) 이름표. nil이면 버튼 없음.
+    var next: String? = nil
     @Environment(\.widgetFamily) private var family
 
-    private var isHome: Bool { family == .systemSmall || family == .systemMedium || family == .systemLarge }
+    private var isHome: Bool { WidgetPaging.isHome(family) }
 
     var body: some View {
         HStack(spacing: 4) {
-            if !isHome {
+            if family != .systemSmall {
                 Text(title).font(.caption2.weight(.semibold))
             }
             Spacer(minLength: 0)
@@ -298,6 +611,7 @@ struct WidgetHeader: View {
             // 잠금화면 위젯은 누르면 앱이 열리므로 홈 화면에만 단다.
             if isHome {
                 RefreshButton()
+                if let next { PageButtons(pagingId: next) }
             }
         }
         .lineLimit(1)
@@ -419,10 +733,12 @@ struct SmallHomeCard: View {
     let scheme: String
     /// 기호 왼쪽 아이콘 (코인 로고·주식 로고·국기). nil이면 아이콘 없이.
     var icon: ItemIcon.Kind? = nil
+    /// 다음 버튼(>) 이름표. nil이면 버튼 없음.
+    var next: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WidgetHeader(title: title, snapshot: snapshot, now: now)
+            WidgetHeader(title: title, snapshot: snapshot, now: now, next: next)
             Spacer(minLength: 4)
             HStack(alignment: .center, spacing: 6) {
                 if let icon {
@@ -498,8 +814,9 @@ extension View {
     /// [squareSmall]이면 작은 칸(accessoryCircular)에서 원형 배경을 깔지 않는다
     /// (코인 작은 사각형 위젯이 직접 사각형 배경을 그린다).
     /// [backdrop]이 있으면 홈 화면 2×2에서 종목 로고를 배경에 깐다 (단일 종목 위젯).
-    func widgetBackground(squareSmall: Bool = false, backdrop: Backdrop? = nil) -> some View {
-        modifier(WidgetBackground(squareSmall: squareSmall, backdrop: backdrop))
+    /// [forceDark]면 홈 화면에서도 예전 짙은 배경을 쓴다 (자유 구성 "줄마다 색"처럼 어두운 바탕 기준 디자인).
+    func widgetBackground(squareSmall: Bool = false, backdrop: Backdrop? = nil, forceDark: Bool = false) -> some View {
+        modifier(WidgetBackground(squareSmall: squareSmall, backdrop: backdrop, forceDark: forceDark))
     }
 }
 
@@ -509,11 +826,13 @@ let widgetBaseColor = Color(red: 0.11, green: 0.11, blue: 0.12)
 private struct WidgetBackground: ViewModifier {
     let squareSmall: Bool
     var backdrop: Backdrop? = nil
+    var forceDark = false
     @Environment(\.widgetFamily) private var family
 
     func body(content: Content) -> some View {
-        if family == .systemSmall {
-            // 홈 화면은 컬러로 그려진다: 앱 다크 테마와 같은 짙은 배경 + 흰 글자.
+        if WidgetPaging.isHome(family) {
+            // 홈 화면은 컬러로 그려진다. 기본은 시안의 흰(라이트)·짙은(다크) 카드로 iOS 설정을 따른다.
+            // 로고 배경·줄마다 색은 어두운 바탕 기준이라 짙은 배경 + 흰 글자로 고정한다.
             // 홈 화면 "색조·투명" 모드에서는 iOS가 이 배경을 지우고 단색으로 그린다.
             if let backdrop, backdrop.style != .plain {
                 content
@@ -521,10 +840,12 @@ private struct WidgetBackground: ViewModifier {
                     // 색이 있는 배경 위에서도 글자가 읽히게 옅은 그림자를 준다.
                     .shadow(color: .black.opacity(backdrop.style == .watermark ? 0 : 0.55), radius: 2, y: 1)
                     .containerBackground(for: .widget) { LogoBackdrop(backdrop: backdrop) }
-            } else {
+            } else if forceDark {
                 content
                     .environment(\.colorScheme, .dark)
                     .containerBackground(for: .widget) { widgetBaseColor }
+            } else {
+                content.containerBackground(for: .widget) { HomePalette.card }
             }
         } else {
             lockScreen(content)
@@ -585,7 +906,7 @@ struct ItemIcon: View {
     }
 
     /// 앱 Catalog.currencies(수출입은행 고시 22개)와 같은 목록.
-    private static let flags = [
+    static let flags = [
         "USD": "🇺🇸", "JPY": "🇯🇵", "EUR": "🇪🇺", "CNY": "🇨🇳", "THB": "🇹🇭",
         "GBP": "🇬🇧", "CHF": "🇨🇭", "CAD": "🇨🇦", "AUD": "🇦🇺", "NZD": "🇳🇿",
         "HKD": "🇭🇰", "SGD": "🇸🇬", "IDR": "🇮🇩", "MYR": "🇲🇾", "BND": "🇧🇳",
@@ -617,6 +938,8 @@ struct ItemIcon: View {
 struct Backdrop {
     let image: UIImage
     let style: LogoBackground
+    /// "로고 색" 배경에 쓸 색 (0~1). nil이면 로고 평균 색. 국기는 평균이 칙칙한 회색이 되므로 통화 대표 색을 준다.
+    var color: (Double, Double, Double)? = nil
 
     /// 코인 위젯: 위젯 편집 순서가 가리키는 코인의 로고 (위젯 Assets `coin-<기호>`).
     static func coin(_ e: SnapshotEntry) -> Backdrop? {
@@ -633,6 +956,29 @@ struct Backdrop {
               let u = StockLogos.fileURL(key: "us-\(st.ticker)"),
               let img = UIImage(contentsOfFile: u.path) else { return nil }
         return Backdrop(image: img, style: e.background)
+    }
+
+    /// 환율 위젯: 지금 보이는 통화의 국기 (이모지를 그림으로 그려 쓴다).
+    static func fx(_ e: SnapshotEntry) -> Backdrop? {
+        guard e.background != .plain, let s = e.snapshot else { return nil }
+        let fxs = s.fxList ?? (s.fx.map { [$0] } ?? [])
+        guard !fxs.isEmpty else { return nil }
+        let code = fxs[e.offset % fxs.count].code
+        guard let img = flagImage(code) else { return nil }
+        return Backdrop(image: img, style: e.background, color: ItemTint.fxColor(code))
+    }
+
+    static func flagImage(_ code: String) -> UIImage? {
+        guard let flag = ItemIcon.flags[code] else { return nil }
+        let side: CGFloat = 200
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            let font = UIFont.systemFont(ofSize: side * 0.8)
+            let text = flag as NSString
+            let size = text.size(withAttributes: [.font: font])
+            text.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: [.font: font])
+        }
     }
 }
 
@@ -660,7 +1006,7 @@ struct LogoBackdrop: View {
                     LinearGradient(colors: [.black.opacity(0.35), .black.opacity(0.7)],
                                    startPoint: .top, endPoint: .bottom)
                 case .color:
-                    let c = Self.averageColor(backdrop.image) ?? (0.3, 0.3, 0.32)
+                    let c = backdrop.color ?? Self.averageColor(backdrop.image) ?? (0.3, 0.3, 0.32)
                     LinearGradient(colors: [rgb(c, 0.85), rgb(c, 0.4)], startPoint: .top, endPoint: .bottom)
                 case .blur:
                     logo.scaledToFill()
@@ -721,6 +1067,9 @@ enum ItemTint {
             return nil
         }
     }
+
+    /// 통화 대표 색 (0~1). 환율 위젯 "로고 색" 배경에도 쓴다.
+    static func fxColor(_ code: String) -> (Double, Double, Double)? { fx[code] }
 
     private static func rgb(_ c: (Double, Double, Double)) -> Color {
         Color(red: c.0, green: c.1, blue: c.2)

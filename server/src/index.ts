@@ -1,7 +1,8 @@
 // MarketPeek 시세 서버 진입점: 예약 실행(cron)으로 환율 캐시를 채우고 GET /quotes로 내려준다.
-// GET /issue는 AI 어제 이슈(지금은 예시 문장).
+// GET /issue는 AI 어제 이슈(지금은 예시 문장). GET /fx/history는 환율 차트용 날짜별 기록.
 // 주식 시세는 앱이 한국투자증권 Open API에서 사용자 키로 직접 받는다 (Finnhub는 재배포 금지라 제거).
 import { fetchFx, kstDate, type FxQuote } from './eximbank';
+import { HISTORY_KEY, historyPoints, updateHistory, type FxHistory } from './fxHistory';
 import { sampleIssue } from './issue';
 import { dashed, fetchCoinMoves, type YesterdayData } from './yesterday';
 
@@ -27,6 +28,13 @@ export default {
     if (req.method !== 'GET') return json({ error: 'method not allowed' }, 405);
     if (url.pathname === '/health') return json({ ok: true });
     if (url.pathname === '/issue') return json(sampleIssue(new Date()));
+    if (url.pathname === '/fx/history') {
+      const code = list(url.searchParams.get('code'))[0];
+      if (!code) return json({ error: 'code required' }, 400);
+      const days = Math.min(Math.max(Number(url.searchParams.get('days')) || 30, 2), 40);
+      const h = await env.QUOTES.get<FxHistory>(HISTORY_KEY, 'json');
+      return json({ code, points: historyPoints(h, code, days) });
+    }
     // 이슈 재료 확인용. 요청마다 업비트를 부르므로 로컬(npm run dev)에서만 연다.
     if (url.pathname === '/issue/data') {
       if (!isLocal(url)) return json({ error: 'not found' }, 404);
@@ -68,6 +76,14 @@ export async function refresh(env: Env, now: Date): Promise<{ fx: Cached<FxQuote
       }
     } catch (e) {
       console.warn(`fx refresh failed: ${e}`);
+    }
+    // 차트용 날짜별 기록도 같은 주기(1시간)로 갱신한다. KV 쓰기는 하루 24회 더해 48회.
+    try {
+      const old = await env.QUOTES.get<FxHistory>(HISTORY_KEY, 'json');
+      const h = await updateHistory(old, list(env.FX_CODES), env.EXIM_API_KEY, now);
+      await env.QUOTES.put(HISTORY_KEY, JSON.stringify(h));
+    } catch (e) {
+      console.warn(`fx history failed: ${e}`);
     }
   }
 

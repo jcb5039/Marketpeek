@@ -54,7 +54,15 @@ enum LiveQuotes {
         return URLSession(configuration: c)
     }()
 
-    static func refresh(_ snap: Snapshot, parts: Set<QuotePart>) async -> Snapshot {
+    /// [also]: 같이 받되 갱신 시각 판단에는 넣지 않는 묶음 (홈 위젯 아래 "어제 이슈" 줄).
+    static func refresh(_ snap: Snapshot, parts wanted: Set<QuotePart>, also: Set<QuotePart> = []) async -> Snapshot {
+        await refreshDetailed(snap, parts: wanted, also: also).snapshot
+    }
+
+    /// [refresh]와 같고, 실제로 새로 받은 묶음([received])도 돌려준다. 위젯 캐시(WidgetCache)는 이것만 저장한다.
+    static func refreshDetailed(_ snap: Snapshot, parts wanted: Set<QuotePart>,
+                                also: Set<QuotePart> = []) async -> (snapshot: Snapshot, received: Set<QuotePart>) {
+        let parts = wanted.union(also)
         var s = snap
         let coinSymbols = s.coins.map(\.symbol)
         let fxCodes = Array(Set((s.fxList ?? []).map(\.code) + [s.fx?.code, "USD"].compactMap { $0 })).sorted()
@@ -117,10 +125,14 @@ enum LiveQuotes {
             .coins: coins.isFresh, .stocks: stocks.isFresh,
             .fx: server.isFresh, .issue: server.isFresh,
         ]
-        if !parts.isEmpty, parts.allSatisfy({ fresh[$0] ?? true }) {
+        if !wanted.isEmpty, wanted.allSatisfy({ fresh[$0] ?? true }) {
             s.updatedAt = Date()
         }
-        return s
+        var received: Set<QuotePart> = []
+        if coins.value != nil { received.insert(.coins) }
+        if stocks.value != nil { received.insert(.stocks) }
+        if server.value != nil { received.formUnion([.fx, .issue]) }
+        return (s, received)
     }
 
     // MARK: - 업비트 (키 없음)
@@ -139,6 +151,60 @@ enum LiveQuotes {
             }
             return merged.isEmpty ? nil : merged
         }
+    }
+
+    /// 홈 위젯 한 종목 모양의 차트: 최근 24시간 가격(30분봉 48개, 오래된 것부터)과 각 봉의 시작 시각.
+    /// 실패하면 nil이고 위젯은 차트 없이 그린다. 시세가 아니므로 갱신 시각에는 영향이 없다.
+    static func coinChart(_ symbol: String, preferCache: Bool = false) async -> PriceChart? {
+        let key = "coin:\(symbol)"
+        // 다음 버튼 직후: 저장해 둔 차트가 있으면 인터넷을 기다리지 않고 그것으로 그린다.
+        if preferCache, let cached = WidgetCache.chart(key) { return cached }
+        let chart = await fetchCoinChart(symbol)
+        if let chart { WidgetCache.saveChart(chart, key: key) }
+        return chart
+    }
+
+    /// 환율 차트: 우리 서버 GET /fx/history (최근 30영업일, 오래된 것부터). 서버 주소가 없거나 실패하면 nil.
+    static func fxChart(_ code: String, base: String?, preferCache: Bool = false) async -> PriceChart? {
+        let key = "fx:\(code)"
+        if preferCache, let cached = WidgetCache.chart(key) { return cached }
+        guard let base, var c = URLComponents(string: base) else { return nil }
+        c.path = "/fx/history"
+        c.queryItems = [URLQueryItem(name: "code", value: code), URLQueryItem(name: "days", value: "30")]
+        guard let url = c.url else { return nil }
+        let chart = await Reuse.shared.value("chart:" + url.absoluteString) { () async -> PriceChart? in
+            guard let body = await getJSON(URLRequest(url: url)) as? [String: Any],
+                  let list = body["points"] as? [[String: Any]] else { return nil }
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = TimeZone(identifier: "Asia/Seoul")
+            f.dateFormat = "yyyy-MM-dd"
+            let points: [PriceChart.Point] = list.compactMap { item in
+                guard let d = (item["date"] as? String).flatMap(f.date(from:)), let r = num(item["rate"]) else { return nil }
+                return PriceChart.Point(date: d, price: r)
+            }
+            return points.count >= 2 ? PriceChart(points: points, kind: .fx) : nil
+        }.value
+        if let chart { WidgetCache.saveChart(chart, key: key) }
+        return chart
+    }
+
+    private static func fetchCoinChart(_ symbol: String) async -> PriceChart? {
+        var c = URLComponents(string: "https://api.upbit.com/v1/candles/minutes/30")!
+        c.queryItems = [URLQueryItem(name: "market", value: "KRW-\(symbol)"),
+                        URLQueryItem(name: "count", value: "48")]
+        guard let url = c.url else { return nil }
+        return await Reuse.shared.value("chart:" + url.absoluteString) { () async -> PriceChart? in
+            guard let list = await getJSON(URLRequest(url: url)) as? [[String: Any]] else { return nil }
+            // 업비트는 최근 것부터 준다. candle_date_time_utc는 "2026-11-19T05:00:00"(시간대 표시 없음, UTC).
+            let points: [PriceChart.Point] = list.reversed().compactMap { item in
+                guard let price = num(item["trade_price"]),
+                      let t = item["candle_date_time_utc"] as? String,
+                      let date = Snapshot.parseDate(t + "Z") else { return nil }
+                return PriceChart.Point(date: date, price: price)
+            }
+            return points.count >= 2 ? PriceChart(points: points) : nil
+        }.value
     }
 
     private static func upbit(_ symbols: [String]) async -> [String: Price]? {
@@ -245,6 +311,51 @@ enum LiveQuotes {
         case us(String, String)
     }
 
+    /// 미국주식 차트: KIS 해외주식 분봉 조회(HHDFS76950200), 마지막 거래일 장중 10분봉(최대 40개, 오래된 것부터).
+    /// 시세 요청이 토큰을 새로 받으므로 여기서는 저장된 토큰이 있을 때만 부른다. 증권사 미연결·실패면 nil.
+    /// 시세 요청과 겹쳐 1초 요청 한도(EGW00201)에 걸리면 잠깐 기다렸다 한 번 더 시도한다.
+    static func stockChart(_ ticker: String, excd: String?, preferCache: Bool = false) async -> PriceChart? {
+        let key = "stock:\(ticker)"
+        if preferCache, let cached = WidgetCache.chart(key) { return cached }
+        guard let excd, let appKey = Keychain.read("kis.appKey"), let appSecret = Keychain.read("kis.appSecret"),
+              let token = KisTokenIssuer.validSaved() else { return nil }
+        var c = URLComponents(string: kisBase + "/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice")!
+        c.queryItems = ["AUTH": "", "EXCD": excd, "SYMB": ticker, "NMIN": "10", "PINC": "0",
+                        "NEXT": "", "NREC": "40", "FILL": "", "KEYB": ""]
+            .map { URLQueryItem(name: $0.key, value: $0.value) }
+        var req = URLRequest(url: c.url!)
+        for (k, v) in ["content-type": "application/json; charset=utf-8",
+                       "authorization": "Bearer \(token)", "appkey": appKey, "appsecret": appSecret,
+                       "tr_id": "HHDFS76950200", "custtype": "P"] {
+            req.setValue(v, forHTTPHeaderField: k)
+        }
+        let request = req
+        let chart = await Reuse.shared.value("chart:" + key) { () async -> PriceChart? in
+            var body = await getJSON(request, anyStatus: true) as? [String: Any]
+            if body?["msg_cd"] as? String == "EGW00201" {
+                try? await Task.sleep(nanoseconds: kisRetryDelay)
+                body = await getJSON(request, anyStatus: true) as? [String: Any]
+            }
+            guard let body, body["rt_cd"] as? String == "0",
+                  let rows = body["output2"] as? [[String: Any]] else { return nil }
+            // 한국 기준 일자·시각(kymd "20261119", khms "053000"). 최근 것부터 오므로 뒤집는다.
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = TimeZone(identifier: "Asia/Seoul")
+            f.dateFormat = "yyyyMMddHHmmss"
+            let lastDay = rows.first?["tymd"] as? String
+            let points: [PriceChart.Point] = rows.reversed().compactMap { r in
+                guard (r["tymd"] as? String) == lastDay,
+                      let ymd = r["kymd"] as? String, let hms = r["khms"] as? String,
+                      let d = f.date(from: ymd + hms), let last = num(r["last"]), last != 0 else { return nil }
+                return PriceChart.Point(date: d, price: last)
+            }
+            return points.count >= 2 ? PriceChart(points: points, kind: .stock) : nil
+        }.value
+        if let chart { WidgetCache.saveChart(chart, key: key) }
+        return chart
+    }
+
     struct KisCall: Sendable {
         let appKey: String
         let appSecret: String
@@ -323,6 +434,22 @@ enum LiveQuotes {
         }
         return nil
     }
+}
+
+/// 홈 위젯 차트 데이터: 시각별 가격 (오래된 것부터).
+struct PriceChart: Sendable, Hashable, Codable {
+    struct Point: Sendable, Hashable, Codable {
+        var date: Date
+        var price: Double
+    }
+
+    /// 축 표기 방식: 코인(24시간, 원화 "9917만") / 환율(30영업일, "1,430.50") / 미국주식(장중, "$390.84")
+    enum Kind: String, Sendable, Codable {
+        case coin, fx, stock
+    }
+
+    var points: [Point]
+    var kind: Kind = .coin
 }
 
 /// 같은 확장 프로세스에서 위젯 여러 개가 연달아 다시 불러올 때 같은 요청을 한 번만 보낸다.
