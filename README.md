@@ -80,7 +80,7 @@ npm run dev     # http://localhost:8787
 |---|---|
 | 장찬범 ([@jcb5039](https://github.com/jcb5039)) | 앱 · 위젯 (Flutter, iOS) |
 | 윤혁주 ([@YoonHyukJu](https://github.com/YoonHyukJu)) | 백엔드 서버 · AI |
-| 이효원 | Frontend(App) · UI/UX Design |
+| 이효원 ([LHW031128](https://github.com/LHW031128)) | Frontend(App) · UI/UX Design |
 
 ## 아이콘 출처
 
