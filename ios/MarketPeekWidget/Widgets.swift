@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 import WidgetKit
 import ActivityKit
@@ -387,12 +388,12 @@ struct HomeCard: View {
     let layout: HomeLayout
     var offset = 0
     var next: String? = nil
-    /// 한 종목 모양의 차트 선 (오래된 가격부터). nil이면 차트 없이.
-    var chart: [Double]? = nil
+    /// 한 종목 모양의 차트 (오래된 가격부터). nil이면 차트 없이.
+    var chart: PriceChart? = nil
     @Environment(\.widgetFamily) private var family
 
     init(title: String, listTitle: String? = nil, snapshot: Snapshot, items: [HomeItem],
-         layout: HomeLayout, offset: Int = 0, next: String? = nil, chart: [Double]? = nil) {
+         layout: HomeLayout, offset: Int = 0, next: String? = nil, chart: PriceChart? = nil) {
         self.title = title; self.listTitle = listTitle; self.snapshot = snapshot; self.items = items
         self.layout = layout; self.offset = offset; self.next = next; self.chart = chart
     }
@@ -402,11 +403,13 @@ struct HomeCard: View {
                   layout: entry.layout, offset: entry.offset, next: entry.pagingId, chart: entry.chart)
     }
 
-    /// 차트 선. 색은 등락률과 같은 상승·하락 색, 점선은 차트 시작 가격.
+    /// 차트. 색은 등락률과 같은 상승·하락 색, 점선은 등락률 기준 가격(코인: 오늘 오전 9시).
+    /// 축은 크기별로: 4×4 시간·가격, 4×2 가격, 2×2 없음.
     @ViewBuilder
     private func sparkline(_ item: HomeItem) -> some View {
-        if let chart, chart.count >= 2 {
-            Sparkline(points: chart, color: Fmt.color(item.change, scheme: scheme))
+        if let chart, chart.points.count >= 2 {
+            PriceChartView(chart: chart, change: item.change, scheme: scheme,
+                           axes: family == .systemLarge ? .full : (family == .systemMedium ? .price : .none))
         }
     }
 
@@ -525,8 +528,8 @@ struct HomeCard: View {
                     if let sub = item.sub { Text(sub).font(.system(size: 10)).foregroundStyle(.secondary) }
                 }
                 Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 6) {
-                    sparkline(item).frame(width: 96, height: 30)
+                VStack(alignment: .trailing, spacing: 4) {
+                    sparkline(item).frame(width: 130, height: 46)
                     change(item.change, 14)
                 }
             }
@@ -658,35 +661,77 @@ struct HomeCard: View {
     }
 }
 
-/// 차트 선: 가장 낮은 값~가장 높은 값을 위젯 높이에 맞추고, 첫 가격 높이에 점선 기준선을 그린다.
-struct Sparkline: View {
-    let points: [Double]
-    let color: Color
+/// 가격 차트 (Swift Charts): 선 + 아래 옅은 색 채움 + 기준 가격 점선. 색은 한 가지(등락률 색).
+/// 기준 가격 = 지금 가격 ÷ (1 + 등락률). 코인은 업비트 기준이라 오늘 오전 9시 가격이 되고,
+/// 선 끝이 점선 위면 등락률 +, 아래면 −로 숫자·색·그림이 항상 맞는다.
+struct PriceChartView: View {
+    enum Axes { case none, price, full }
+
+    let chart: PriceChart
+    let change: Double?
+    let scheme: String
+    var axes: Axes = .none
+
+    private var base: Double? {
+        guard let change, let last = chart.points.last?.price, change > -100 else { return nil }
+        return last / (1 + change / 100)
+    }
 
     var body: some View {
-        GeometryReader { g in
-            let lo = points.min() ?? 0, hi = points.max() ?? 1
-            let span = hi - lo > 0 ? hi - lo : 1
-            let w = g.size.width, h = g.size.height
-            let pt = { (i: Int, v: Double) in
-                CGPoint(x: w * CGFloat(i) / CGFloat(max(points.count - 1, 1)),
-                        y: h * (1 - CGFloat((v - lo) / span)))
+        let color = Fmt.color(change, scheme: scheme)
+        let prices = chart.points.map(\.price) + (base.map { [$0] } ?? [])
+        let lo = prices.min() ?? 0, hi = prices.max() ?? 1
+        let pad = max((hi - lo) * 0.08, hi * 0.0005)
+        let domain = (lo - pad)...(hi + pad)
+        Chart {
+            ForEach(chart.points, id: \.date) { p in
+                AreaMark(x: .value("시각", p.date),
+                         yStart: .value("바닥", domain.lowerBound),
+                         yEnd: .value("가격", p.price))
+                    .foregroundStyle(LinearGradient(colors: [color.opacity(0.3), color.opacity(0.02)],
+                                                    startPoint: .top, endPoint: .bottom))
+                LineMark(x: .value("시각", p.date), y: .value("가격", p.price))
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
             }
-            let baseY = pt(0, points[0]).y
-            ZStack {
-                Path { p in
-                    p.move(to: CGPoint(x: 0, y: baseY))
-                    p.addLine(to: CGPoint(x: w, y: baseY))
-                }
-                .stroke(Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                Path { p in
-                    for (i, v) in points.enumerated() {
-                        if i == 0 { p.move(to: pt(i, v)) } else { p.addLine(to: pt(i, v)) }
-                    }
-                }
-                .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            if let base {
+                RuleMark(y: .value("기준", base))
+                    .foregroundStyle(Color.secondary.opacity(0.6))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
             }
         }
+        .chartYScale(domain: domain)
+        .chartXAxis(axes == .full ? .visible : .hidden)
+        .chartYAxis(axes == .none ? .hidden : .visible)
+        .chartXAxis {
+            if axes == .full {
+                AxisMarks(values: .stride(by: .hour, count: 6)) { v in
+                    AxisGridLine().foregroundStyle(HomePalette.line)
+                    AxisValueLabel {
+                        if let d = v.as(Date.self) {
+                            Text(Self.hourLabel(d)).font(.system(size: 8)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .chartYAxis {
+            if axes != .none {
+                AxisMarks(position: .trailing, values: [lo, hi]) { v in
+                    AxisValueLabel {
+                        if let y = v.as(Double.self) {
+                            Text(Fmt.krwShort(y)).font(.system(size: 8)).monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// "15시", 자정은 날짜 바뀜이 보이게 "0시".
+    static func hourLabel(_ d: Date) -> String {
+        "\(Calendar.current.component(.hour, from: d))시"
     }
 }
 
@@ -1071,7 +1116,10 @@ private let changeOnlyEntry = SnapshotEntry(date: .now, snapshot: .placeholder, 
 
 // 홈 시안: 한 종목 / 목록 × 이슈 있음(placeholder) / 없음. 라이트·다크는 Canvas의 설정에서 바꿔 본다.
 private let noIssue: Snapshot = { var s = Snapshot.placeholder; s.issue = nil; return s }()
-private let sampleChart: [Double] = (0..<48).map { 100 + 3 * sin(Double($0) / 5) + Double($0) * 0.15 }
+private let sampleChart = PriceChart(points: (0..<48).map { i in
+    PriceChart.Point(date: Date().addingTimeInterval(Double(i - 47) * 1800),
+                     price: 97_500_000 + 900_000 * sin(Double(i) / 5) + Double(i) * 30_000)
+})
 private let single = SnapshotEntry(date: .now, snapshot: .placeholder, layout: .single, pagingId: "preview",
                                    chart: sampleChart)
 private let singleNoIssue = SnapshotEntry(date: .now, snapshot: noIssue, layout: .single, pagingId: "preview",
