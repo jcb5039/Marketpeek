@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchFx, kstDate } from '../src/eximbank';
 import worker, { collectYesterday, refresh, type Env } from '../src/index';
 import { sampleIssue } from '../src/issue';
+import { BACKFILL_PER_RUN, HISTORY_KEY, historyPoints, updateHistory } from '../src/fxHistory';
 import { fetchCoinMoves } from '../src/yesterday';
 
 const jsonRes = (body: unknown, status = 200) =>
@@ -202,5 +203,68 @@ describe('어제 이슈 재료', () => {
   it('/issue/data는 배포 주소에서는 404', async () => {
     const res = await worker.fetch(new Request('https://marketpeek-api.example.workers.dev/issue/data'), env());
     expect(res.status).toBe(404);
+  });
+});
+
+describe('환율 기록 (차트용)', () => {
+  // 2026-11-09(월) 10:00 KST. 오늘은 고시 전(빈 배열), 11-07(토)·11-08(일)은 주말.
+  const now = new Date('2026-11-09T01:00:00Z');
+  const weekend = new Set(['20261107', '20261108']);
+  const fetchFn = vi.fn(async (url: string) => {
+    const date = new URL(url).searchParams.get('searchdate')!;
+    if (date === '20261109' || weekend.has(date)) return jsonRes([]);
+    return jsonRes([
+      { result: 1, cur_unit: 'USD', deal_bas_r: `1,4${date.slice(-2)}` },
+      { result: 1, cur_unit: 'JPY(100)', deal_bas_r: '950' },
+    ]);
+  });
+
+  it('오늘 + 지난 날짜를 최신부터 5개 채우고, 주말은 빈 날로 기록한다', async () => {
+    const h = await updateHistory(null, ['USD', 'JPY'], 'ek', now, fetchFn as unknown as typeof fetch);
+    expect(Object.keys(h.days).sort()).toEqual(['20261104', '20261105', '20261106']);
+    expect(h.days['20261106']).toEqual({ USD: 1406, JPY: 950 });
+    expect(h.empty.sort()).toEqual(['20261107', '20261108']);
+    // 오늘(고시 전)은 빈 날로 표시하지 않아 다음에 다시 묻는다.
+    expect(h.empty).not.toContain('20261109');
+    expect(fetchFn.mock.calls.length).toBe(1 + BACKFILL_PER_RUN);
+  });
+
+  it('이미 있는 날짜와 빈 날은 다시 묻지 않고 더 지난 날짜를 채운다', async () => {
+    fetchFn.mockClear();
+    const first = await updateHistory(null, ['USD'], 'ek', now, fetchFn as unknown as typeof fetch);
+    fetchFn.mockClear();
+    const second = await updateHistory(first, ['USD'], 'ek', now, fetchFn as unknown as typeof fetch);
+    const asked = fetchFn.mock.calls.map(([u]) => new URL(String(u)).searchParams.get('searchdate'));
+    expect(asked[0]).toBe('20261109');
+    expect(asked.slice(1)).toEqual(['20261103', '20261102', '20261101', '20261031', '20261030']);
+    expect(Object.keys(second.days).length).toBeGreaterThan(Object.keys(first.days).length);
+  });
+
+  it('historyPoints는 그 통화의 최근 영업일을 오래된 것부터 준다', () => {
+    const h = {
+      days: { '20261106': { USD: 1406 }, '20261104': { USD: 1404 }, '20261105': { USD: 1405, JPY: 950 } },
+      empty: [],
+    };
+    expect(historyPoints(h, 'USD', 2)).toEqual([
+      { date: '2026-11-05', rate: 1405 },
+      { date: '2026-11-06', rate: 1406 },
+    ]);
+    expect(historyPoints(h, 'JPY', 30)).toEqual([{ date: '2026-11-05', rate: 950 }]);
+  });
+
+  it('GET /fx/history는 저장된 기록에서 읽고, code가 없으면 400', async () => {
+    const e = env();
+    e.QUOTES.store.set(HISTORY_KEY, JSON.stringify({ days: { '20261106': { USD: 1406 } }, empty: [] }));
+    const res = await worker.fetch(new Request('https://x/fx/history?code=usd&days=30'), e);
+    expect(await res.json()).toEqual({ code: 'USD', points: [{ date: '2026-11-06', rate: 1406 }] });
+    const bad = await worker.fetch(new Request('https://x/fx/history'), e);
+    expect(bad.status).toBe(400);
+  });
+
+  it('cron이 환율을 받을 때 기록도 KV에 쓴다', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonRes([{ result: 1, cur_unit: 'USD', deal_bas_r: '1,430.5' }])));
+    const e = env();
+    await refresh(e, now);
+    expect(e.QUOTES.store.has(HISTORY_KEY)).toBe(true);
   });
 });
