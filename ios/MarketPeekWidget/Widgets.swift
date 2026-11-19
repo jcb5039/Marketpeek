@@ -390,12 +390,16 @@ struct HomeCard: View {
     var next: String? = nil
     /// 한 종목 모양의 차트 (오래된 가격부터). nil이면 차트 없이.
     var chart: PriceChart? = nil
+    /// 목록 줄마다 색 (자유 구성 위젯 편집 "배경"). 기본이면 시안 목록.
+    var rowStyle: MixBackground = .plain
     @Environment(\.widgetFamily) private var family
 
     init(title: String, listTitle: String? = nil, snapshot: Snapshot, items: [HomeItem],
-         layout: HomeLayout, offset: Int = 0, next: String? = nil, chart: PriceChart? = nil) {
+         layout: HomeLayout, offset: Int = 0, next: String? = nil, chart: PriceChart? = nil,
+         rowStyle: MixBackground = .plain) {
         self.title = title; self.listTitle = listTitle; self.snapshot = snapshot; self.items = items
         self.layout = layout; self.offset = offset; self.next = next; self.chart = chart
+        self.rowStyle = rowStyle
     }
 
     init(title: String, listTitle: String? = nil, entry: SnapshotEntry, snapshot: Snapshot, items: [HomeItem]) {
@@ -429,6 +433,8 @@ struct HomeCard: View {
                     case .systemMedium: singleMedium(item)
                     default: singleSmall(item)
                     }
+                } else if rowStyle != .plain {
+                    tintedList(shown, hasIssue: hasIssue)
                 } else {
                     switch family {
                     case .systemLarge: listLarge(shown, hasIssue: hasIssue)
@@ -632,6 +638,56 @@ struct HomeCard: View {
             }
             .padding(.top, 8)
             Spacer(minLength: hasIssue ? 6 : 0)
+        }
+    }
+
+    /// 자유 구성 "줄마다 색" 큰 목록: 줄마다 로고·국기 색을 깐다(2×2 줄마다 색과 같은 3가지 모양).
+    /// 4×2는 2열, 4×4는 1열.
+    private func tintedList(_ rows: [HomeItem], hasIssue: Bool) -> some View {
+        let large = family == .systemLarge
+        let columns = large ? [rows] : [Array(rows.prefix(3)), Array(rows.dropFirst(3))]
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(Array(columns.enumerated()), id: \.offset) { _, col in
+                    VStack(spacing: large ? 5 : 4) {
+                        ForEach(Array(col.enumerated()), id: \.offset) { _, r in tintedRow(r, large: large) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .top)
+                }
+            }
+            .padding(.top, 8)
+            Spacer(minLength: hasIssue ? 6 : 0)
+        }
+    }
+
+    private func tintedRow(_ r: HomeItem, large: Bool) -> some View {
+        HStack(spacing: 6) {
+            ItemIcon(kind: r.icon, size: large ? 22 : 16)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(r.symbol).font(.system(size: large ? 12 : 11, weight: .bold))
+                if large { Text(r.name).font(.system(size: 9)).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 4)
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(r.listPrice).font(.system(size: large ? 12 : 10)).monospacedDigit()
+                change(r.change, large ? 11 : 9)
+            }
+        }
+        .minimumScaleFactor(0.6)
+        .padding(.horizontal, 6)
+        .padding(.vertical, large ? 4 : 3)
+        .background {
+            if let c = ItemTint.color(for: r.icon) {
+                let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+                switch rowStyle {
+                case .rowCard:
+                    shape.fill(Color.white.opacity(0.08)).overlay(shape.strokeBorder(c.opacity(0.9), lineWidth: 1.5))
+                case .rowFade:
+                    shape.fill(LinearGradient(colors: [c.opacity(0.8), c.opacity(0)], startPoint: .leading, endPoint: .trailing))
+                default:
+                    shape.fill(c.opacity(0.55))
+                }
+            }
         }
     }
 
@@ -871,7 +927,8 @@ struct MixWidgetView: View {
                 EmptyHint(title: "자유 구성", message: "앱에서 코인·종목·환율을 추가하세요")
             } else if family != .systemSmall || entry.mixStyle == .plain {
                 // 시안 목록 (2×2 기본, 4×2·4×4). 줄마다 색은 2×2에서만.
-                HomeCard(title: "자유 구성", snapshot: snap, items: items.map(\.homeItem), layout: .list)
+                HomeCard(title: "자유 구성", snapshot: snap, items: items.map(\.homeItem), layout: .list,
+                         rowStyle: family == .systemSmall ? .plain : entry.mixStyle)
             } else if entry.mixStyle != .plain {
                 // 줄마다 색: 줄 여백 때문에 제목 줄은 빼고, 갱신 시각은 맨 아래에 작게 둔다.
                 VStack(alignment: .leading, spacing: 4) {

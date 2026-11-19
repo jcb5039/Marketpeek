@@ -811,7 +811,7 @@ private struct WidgetBackground: ViewModifier {
                     // 색이 있는 배경 위에서도 글자가 읽히게 옅은 그림자를 준다.
                     .shadow(color: .black.opacity(backdrop.style == .watermark ? 0 : 0.55), radius: 2, y: 1)
                     .containerBackground(for: .widget) { LogoBackdrop(backdrop: backdrop) }
-            } else if forceDark && family == .systemSmall {
+            } else if forceDark {
                 content
                     .environment(\.colorScheme, .dark)
                     .containerBackground(for: .widget) { widgetBaseColor }
