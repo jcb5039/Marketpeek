@@ -265,6 +265,10 @@ enum WidgetCache {
         store?.set(Date().timeIntervalSince1970, forKey: navKey)
     }
 
+    static func clearNavigated() {
+        store?.removeObject(forKey: navKey)
+    }
+
     static var recentlyNavigated: Bool {
         guard let t = store?.object(forKey: navKey) as? Double else { return false }
         return Date().timeIntervalSince1970 - t < navWindow
@@ -410,14 +414,19 @@ enum ReloadPlan {
     }
 }
 
-/// 홈 화면 위젯의 새로고침 버튼(↻). 버튼을 누르면 iOS가 그 위젯의 타임라인을 다시 만들어
-/// 앱을 열지 않고 시세를 새로 받는다. 할 일은 없고, 다시 만드는 건 WidgetKit이 한다.
+/// 홈 화면 위젯의 새로고침 버튼(↻). 누른 위젯뿐 아니라 MarketPeek 위젯 전체(코인·주식·환율·이슈·자유 구성)를
+/// 다시 만들어 달라고 iOS에 요청해, 앱을 열지 않고 모든 시세를 새로 받는다(실제 시점은 iOS가 정한다).
+/// 다음·이전 버튼 직후의 "저장값으로 그리기"는 풀어서 인터넷에서 새로 받게 한다.
 /// 60초 안에 다시 누르면 같은 요청을 재사용(LiveQuotes Reuse)해 값이 그대로일 수 있다.
 struct RefreshQuotesIntent: AppIntent {
     static let title: LocalizedStringResource = "시세 새로고침"
     static let isDiscoverable = false
 
-    func perform() async throws -> some IntentResult { .result() }
+    func perform() async throws -> some IntentResult {
+        WidgetCache.clearNavigated()
+        WidgetCenter.shared.reloadAllTimelines()
+        return .result()
+    }
 }
 
 /// 홈 화면 위젯의 새로고침 버튼 ↻ (제목 줄, 자유 구성 아래 줄).
