@@ -183,15 +183,28 @@ struct NextItemIntent: AppIntent {
 /// 홈 화면 위젯 제목 줄 맨 오른쪽의 다음 버튼 ›
 struct NextButton: View {
     let pagingId: String
+    @Environment(\.widgetFamily) private var family
 
     var body: some View {
         Button(intent: NextItemIntent(pagingId: pagingId)) {
-            Image(systemName: "chevron.right").font(.caption.weight(.bold))
-                .frame(width: 18, height: 16)
-                .contentShape(Rectangle())
+            HeaderButtonIcon(systemName: "chevron.right", family: family)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+    }
+}
+
+/// 제목 줄 버튼(↻ ›) 아이콘. 누르기 쉽게 크게, 누르는 영역은 아이콘보다 넓게. 2×2는 공간이 좁아 조금 작게.
+struct HeaderButtonIcon: View {
+    let systemName: String
+    let family: WidgetFamily
+
+    var body: some View {
+        let small = family == .systemSmall
+        Image(systemName: systemName)
+            .font(.system(size: small ? 13 : 16, weight: .semibold))
+            .frame(width: small ? 24 : 30, height: small ? 22 : 26)
+            .contentShape(Rectangle())
     }
 }
 
@@ -248,9 +261,11 @@ struct RefreshQuotesIntent: AppIntent {
 
 /// 홈 화면 위젯의 새로고침 버튼 ↻ (제목 줄, 자유 구성 아래 줄).
 struct RefreshButton: View {
+    @Environment(\.widgetFamily) private var family
+
     var body: some View {
         Button(intent: RefreshQuotesIntent()) {
-            Image(systemName: "arrow.clockwise").font(.caption2.weight(.semibold))
+            HeaderButtonIcon(systemName: "arrow.clockwise", family: family)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
