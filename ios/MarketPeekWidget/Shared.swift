@@ -52,8 +52,16 @@ extension SnapshotEntry {
             async let logoDone: Void = StockLogos.prefetch(itemIds: logoIds)
             // 차트도 시세와 동시에 받는다. 실패해도 시세·갱신 시각에는 영향이 없다.
             async let chartDone: PriceChart? = loadChart(chart, s)
-            // 홈 위젯 아래 "어제 이슈" 줄: 같이 받되 갱신 시각은 시세 기준으로만 바꾼다.
-            snap = await LiveQuotes.refresh(s, parts: wanted, also: withIssue ? [.issue] : [])
+            let also: Set<QuotePart> = withIssue ? [.issue] : []
+            if WidgetCache.recentlyNavigated {
+                // 다음 버튼(›) 직후: 인터넷을 기다리지 않고 저장해 둔 값으로 바로 그린다.
+                snap = WidgetCache.apply(to: s, parts: wanted.union(also))
+            } else {
+                // 홈 위젯 아래 "어제 이슈" 줄: 같이 받되 갱신 시각은 시세 기준으로만 바꾼다.
+                let r = await LiveQuotes.refreshDetailed(s, parts: wanted, also: also)
+                snap = r.snapshot
+                WidgetCache.save(r.snapshot, received: r.received)
+            }
             await logoDone
             points = await chartDone
         }
@@ -175,6 +183,7 @@ struct NextItemIntent: AppIntent {
     init(pagingId: String) { self.pagingId = pagingId }
 
     func perform() async throws -> some IntentResult {
+        WidgetCache.markNavigated()
         WidgetPaging.advance(pagingId)
         return .result()
     }
@@ -205,6 +214,138 @@ struct HeaderButtonIcon: View {
             .font(.system(size: small ? 13 : 16, weight: .semibold))
             .frame(width: small ? 24 : 30, height: small ? 22 : 26)
             .contentShape(Rectangle())
+    }
+}
+
+// MARK: - 위젯 캐시 (마지막으로 받은 시세·차트)
+
+/// 위젯이 마지막으로 새로 받은 시세·차트. 앱 스냅샷("snapshot")과 다른 키에 저장해 서로 덮어쓰지 않는다.
+/// 다음 버튼(›)을 누른 직후에는 인터넷을 기다리지 않고 이 값으로 바로 그린다.
+/// 실제로 새로 받은 묶음만 저장하므로 실패한 묶음의 오래된 값이 "방금 받은 값"이 되지 않는다.
+enum WidgetCache {
+    private static let quotesKey = "widget.cache.quotes"
+    private static let chartPrefix = "widget.cache.chart."
+    private static let navKey = "widget.lastNav"
+    /// 다음 버튼을 누른 뒤 이 시간 안에 만드는 타임라인은 저장값으로 그린다.
+    static let navWindow: TimeInterval = 10
+    private static var store: UserDefaults? { UserDefaults(suiteName: Snapshot.appGroupId) }
+
+    struct Quotes: Codable {
+        var coins: [String: Snapshot.Coin] = [:]
+        var stocks: [String: Snapshot.Stock] = [:]
+        var krStocks: [String: Snapshot.KrStock] = [:]
+        var fx: [String: Snapshot.Fx] = [:]
+        var usdKrw: Double?
+        var issue: Snapshot.Issue?
+        /// 묶음별로 마지막으로 새로 받은 시각 ("coins", "stocks", "fx", "issue")
+        var at: [String: Date] = [:]
+    }
+
+    static func markNavigated() {
+        store?.set(Date().timeIntervalSince1970, forKey: navKey)
+    }
+
+    static var recentlyNavigated: Bool {
+        guard let t = store?.object(forKey: navKey) as? Double else { return false }
+        return Date().timeIntervalSince1970 - t < navWindow
+    }
+
+    private static func name(_ p: QuotePart) -> String {
+        switch p {
+        case .coins: "coins"
+        case .stocks: "stocks"
+        case .fx: "fx"
+        case .issue: "issue"
+        }
+    }
+
+    /// 새로 받은 묶음([received])의 값만 저장한다.
+    static func save(_ s: Snapshot, received: Set<QuotePart>) {
+        guard !received.isEmpty else { return }
+        var q = read(Quotes.self, quotesKey) ?? Quotes()
+        if received.contains(.coins) { for c in s.coins { q.coins[c.symbol] = c } }
+        if received.contains(.stocks) {
+            for st in s.stocks { q.stocks[st.ticker] = st }
+            for k in s.krStocks ?? [] { q.krStocks[k.code] = k }
+        }
+        if received.contains(.fx) {
+            for f in (s.fxList ?? []) + (s.fx.map { [$0] } ?? []) { q.fx[f.code] = f }
+            if let u = s.usdKrw { q.usdKrw = u }
+        }
+        if received.contains(.issue) { q.issue = s.issue }
+        let now = Date()
+        for p in received { q.at[name(p)] = now }
+        write(q, quotesKey)
+    }
+
+    /// 앱 스냅샷(목록·설정)에 저장해 둔 값을 덮는다. 앱이 더 최근에 쓴 묶음은 앱 값을 그대로 둔다.
+    /// 갱신 시각은 이 위젯의 시세 묶음을 모두 저장값으로 덮었을 때 그중 가장 오래된 저장 시각이 된다.
+    static func apply(to app: Snapshot, parts: Set<QuotePart>) -> Snapshot {
+        guard let q = read(Quotes.self, quotesKey) else { return app }
+        var s = app
+        let appAt = app.updatedAt ?? .distantPast
+        func newer(_ p: QuotePart) -> Date? {
+            guard parts.contains(p), let t = q.at[name(p)], t > appAt else { return nil }
+            return t
+        }
+        var times: [Date] = []
+        if let t = newer(.coins) {
+            for i in s.coins.indices {
+                guard let c = q.coins[s.coins[i].symbol] else { continue }
+                s.coins[i].price = c.price; s.coins[i].priceShort = c.priceShort; s.coins[i].change = c.change
+            }
+            times.append(t)
+        }
+        if let t = newer(.stocks) {
+            for i in s.stocks.indices {
+                guard let c = q.stocks[s.stocks[i].ticker] else { continue }
+                s.stocks[i].priceUsd = c.priceUsd; s.stocks[i].priceKrw = c.priceKrw
+                s.stocks[i].priceKrwShort = c.priceKrwShort; s.stocks[i].change = c.change
+            }
+            if var list = s.krStocks {
+                for i in list.indices {
+                    guard let c = q.krStocks[list[i].code] else { continue }
+                    list[i].price = c.price; list[i].priceShort = c.priceShort; list[i].change = c.change
+                }
+                s.krStocks = list
+            }
+            times.append(t)
+        }
+        if let t = newer(.fx) {
+            func fill(_ f: inout Snapshot.Fx) {
+                guard let c = q.fx[f.code] else { return }
+                f.rate = c.rate; f.change = c.change
+            }
+            if var f = s.fx { fill(&f); s.fx = f }
+            if var list = s.fxList {
+                for i in list.indices { fill(&list[i]) }
+                s.fxList = list
+            }
+            if let u = q.usdKrw { s.usdKrw = u }
+            times.append(t)
+        }
+        if newer(.issue) != nil { s.issue = q.issue }
+        let main = parts.subtracting([.issue])
+        if !main.isEmpty, times.count == main.count, let oldest = times.min() { s.updatedAt = oldest }
+        return s
+    }
+
+    static func chart(_ key: String) -> PriceChart? { read(PriceChart.self, chartPrefix + key) }
+
+    static func saveChart(_ chart: PriceChart, key: String) { write(chart, chartPrefix + key) }
+
+    private static func read<T: Decodable>(_ type: T.Type, _ key: String) -> T? {
+        guard let data = store?.data(forKey: key) else { return nil }
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .secondsSince1970
+        return try? d.decode(type, from: data)
+    }
+
+    private static func write<T: Encodable>(_ value: T, _ key: String) {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .secondsSince1970
+        guard let data = try? e.encode(value) else { return }
+        store?.set(data, forKey: key)
     }
 }
 

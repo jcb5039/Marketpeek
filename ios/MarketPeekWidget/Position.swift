@@ -250,7 +250,8 @@ struct CoinProvider: AppIntentTimelineProvider {
                                                 ? { snap in
                                                     // 화면에 보이는 코인 하나의 24시간 차트만 받는다.
                                                     guard snap.coins.indices.contains(p.offset) else { return nil }
-                                                    return await LiveQuotes.coinChart(snap.coins[p.offset].symbol)
+                                                    return await LiveQuotes.coinChart(snap.coins[p.offset].symbol,
+                                                                                  preferCache: WidgetCache.recentlyNavigated)
                                                 } : nil)
     }
 }

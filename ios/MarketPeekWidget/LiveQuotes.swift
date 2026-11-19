@@ -56,6 +56,12 @@ enum LiveQuotes {
 
     /// [also]: 같이 받되 갱신 시각 판단에는 넣지 않는 묶음 (홈 위젯 아래 "어제 이슈" 줄).
     static func refresh(_ snap: Snapshot, parts wanted: Set<QuotePart>, also: Set<QuotePart> = []) async -> Snapshot {
+        await refreshDetailed(snap, parts: wanted, also: also).snapshot
+    }
+
+    /// [refresh]와 같고, 실제로 새로 받은 묶음([received])도 돌려준다. 위젯 캐시(WidgetCache)는 이것만 저장한다.
+    static func refreshDetailed(_ snap: Snapshot, parts wanted: Set<QuotePart>,
+                                also: Set<QuotePart> = []) async -> (snapshot: Snapshot, received: Set<QuotePart>) {
         let parts = wanted.union(also)
         var s = snap
         let coinSymbols = s.coins.map(\.symbol)
@@ -122,7 +128,11 @@ enum LiveQuotes {
         if !wanted.isEmpty, wanted.allSatisfy({ fresh[$0] ?? true }) {
             s.updatedAt = Date()
         }
-        return s
+        var received: Set<QuotePart> = []
+        if coins.value != nil { received.insert(.coins) }
+        if stocks.value != nil { received.insert(.stocks) }
+        if server.value != nil { received.formUnion([.fx, .issue]) }
+        return (s, received)
     }
 
     // MARK: - 업비트 (키 없음)
@@ -145,7 +155,16 @@ enum LiveQuotes {
 
     /// 홈 위젯 한 종목 모양의 차트: 최근 24시간 가격(30분봉 48개, 오래된 것부터)과 각 봉의 시작 시각.
     /// 실패하면 nil이고 위젯은 차트 없이 그린다. 시세가 아니므로 갱신 시각에는 영향이 없다.
-    static func coinChart(_ symbol: String) async -> PriceChart? {
+    static func coinChart(_ symbol: String, preferCache: Bool = false) async -> PriceChart? {
+        let key = "coin:\(symbol)"
+        // 다음 버튼 직후: 저장해 둔 차트가 있으면 인터넷을 기다리지 않고 그것으로 그린다.
+        if preferCache, let cached = WidgetCache.chart(key) { return cached }
+        let chart = await fetchCoinChart(symbol)
+        if let chart { WidgetCache.saveChart(chart, key: key) }
+        return chart
+    }
+
+    private static func fetchCoinChart(_ symbol: String) async -> PriceChart? {
         var c = URLComponents(string: "https://api.upbit.com/v1/candles/minutes/30")!
         c.queryItems = [URLQueryItem(name: "market", value: "KRW-\(symbol)"),
                         URLQueryItem(name: "count", value: "48")]
@@ -348,8 +367,8 @@ enum LiveQuotes {
 }
 
 /// 홈 위젯 차트 데이터: 시각별 가격 (오래된 것부터).
-struct PriceChart: Sendable, Hashable {
-    struct Point: Sendable, Hashable {
+struct PriceChart: Sendable, Hashable, Codable {
+    struct Point: Sendable, Hashable, Codable {
         var date: Date
         var price: Double
     }
