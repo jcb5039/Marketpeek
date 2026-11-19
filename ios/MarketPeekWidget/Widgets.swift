@@ -387,17 +387,27 @@ struct HomeCard: View {
     let layout: HomeLayout
     var offset = 0
     var next: String? = nil
+    /// 한 종목 모양의 차트 선 (오래된 가격부터). nil이면 차트 없이.
+    var chart: [Double]? = nil
     @Environment(\.widgetFamily) private var family
 
     init(title: String, listTitle: String? = nil, snapshot: Snapshot, items: [HomeItem],
-         layout: HomeLayout, offset: Int = 0, next: String? = nil) {
+         layout: HomeLayout, offset: Int = 0, next: String? = nil, chart: [Double]? = nil) {
         self.title = title; self.listTitle = listTitle; self.snapshot = snapshot; self.items = items
-        self.layout = layout; self.offset = offset; self.next = next
+        self.layout = layout; self.offset = offset; self.next = next; self.chart = chart
     }
 
     init(title: String, listTitle: String? = nil, entry: SnapshotEntry, snapshot: Snapshot, items: [HomeItem]) {
         self.init(title: title, listTitle: listTitle, snapshot: snapshot, items: items,
-                  layout: entry.layout, offset: entry.offset, next: entry.pagingId)
+                  layout: entry.layout, offset: entry.offset, next: entry.pagingId, chart: entry.chart)
+    }
+
+    /// 차트 선. 색은 등락률과 같은 상승·하락 색, 점선은 차트 시작 가격.
+    @ViewBuilder
+    private func sparkline(_ item: HomeItem) -> some View {
+        if let chart, chart.count >= 2 {
+            Sparkline(points: chart, color: Fmt.color(item.change, scheme: scheme))
+        }
     }
 
     private var scheme: String { snapshot.settings.colorScheme }
@@ -482,7 +492,17 @@ struct HomeCard: View {
     private func singleSmall(_ item: HomeItem) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Spacer(minLength: 4)
-            nameLine(item, icon: 16, font: 13, showName: false)
+            if snapshot.issue != nil {
+                // 이슈 줄이 있으면 차트는 이름 오른쪽에 작게.
+                HStack(spacing: 6) {
+                    nameLine(item, icon: 16, font: 13, showName: false)
+                    Spacer(minLength: 4)
+                    sparkline(item).frame(width: 52, height: 16)
+                }
+            } else {
+                nameLine(item, icon: 16, font: 13, showName: false)
+                sparkline(item).frame(maxWidth: .infinity, maxHeight: 30).padding(.vertical, 4)
+            }
             Spacer(minLength: 4)
             bigPrice(item.price, 20)
             HStack(spacing: 4) {
@@ -505,7 +525,10 @@ struct HomeCard: View {
                     if let sub = item.sub { Text(sub).font(.system(size: 10)).foregroundStyle(.secondary) }
                 }
                 Spacer(minLength: 8)
-                change(item.change, 14)
+                VStack(alignment: .trailing, spacing: 6) {
+                    sparkline(item).frame(width: 96, height: 30)
+                    change(item.change, 14)
+                }
             }
             Spacer(minLength: snapshot.issue == nil ? 0 : 6)
         }
@@ -521,7 +544,11 @@ struct HomeCard: View {
             .padding(.top, 10)
             bigPrice(item.price, 34).padding(.top, 8)
             if let sub = item.sub { Text(sub).font(.system(size: 11)).foregroundStyle(.secondary) }
-            Spacer(minLength: 8)
+            if chart != nil {
+                sparkline(item).frame(maxWidth: .infinity, maxHeight: .infinity).padding(.vertical, 12)
+            } else {
+                Spacer(minLength: 8)
+            }
             HomePalette.line.frame(height: 1)
             HStack(alignment: .top, spacing: 6) {
                 ForEach(item.info, id: \.self) { p in
@@ -627,6 +654,38 @@ struct HomeCard: View {
             .minimumScaleFactor(0.6)
             .padding(.top, 10)
             Spacer(minLength: hasIssue ? 8 : 0)
+        }
+    }
+}
+
+/// 차트 선: 가장 낮은 값~가장 높은 값을 위젯 높이에 맞추고, 첫 가격 높이에 점선 기준선을 그린다.
+struct Sparkline: View {
+    let points: [Double]
+    let color: Color
+
+    var body: some View {
+        GeometryReader { g in
+            let lo = points.min() ?? 0, hi = points.max() ?? 1
+            let span = hi - lo > 0 ? hi - lo : 1
+            let w = g.size.width, h = g.size.height
+            let pt = { (i: Int, v: Double) in
+                CGPoint(x: w * CGFloat(i) / CGFloat(max(points.count - 1, 1)),
+                        y: h * (1 - CGFloat((v - lo) / span)))
+            }
+            let baseY = pt(0, points[0]).y
+            ZStack {
+                Path { p in
+                    p.move(to: CGPoint(x: 0, y: baseY))
+                    p.addLine(to: CGPoint(x: w, y: baseY))
+                }
+                .stroke(Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                Path { p in
+                    for (i, v) in points.enumerated() {
+                        if i == 0 { p.move(to: pt(i, v)) } else { p.addLine(to: pt(i, v)) }
+                    }
+                }
+                .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
         }
     }
 }
@@ -1012,8 +1071,11 @@ private let changeOnlyEntry = SnapshotEntry(date: .now, snapshot: .placeholder, 
 
 // 홈 시안: 한 종목 / 목록 × 이슈 있음(placeholder) / 없음. 라이트·다크는 Canvas의 설정에서 바꿔 본다.
 private let noIssue: Snapshot = { var s = Snapshot.placeholder; s.issue = nil; return s }()
-private let single = SnapshotEntry(date: .now, snapshot: .placeholder, layout: .single, pagingId: "preview")
-private let singleNoIssue = SnapshotEntry(date: .now, snapshot: noIssue, layout: .single, pagingId: "preview")
+private let sampleChart: [Double] = (0..<48).map { 100 + 3 * sin(Double($0) / 5) + Double($0) * 0.15 }
+private let single = SnapshotEntry(date: .now, snapshot: .placeholder, layout: .single, pagingId: "preview",
+                                   chart: sampleChart)
+private let singleNoIssue = SnapshotEntry(date: .now, snapshot: noIssue, layout: .single, pagingId: "preview",
+                                          chart: sampleChart)
 private let list = SnapshotEntry(date: .now, snapshot: .placeholder, layout: .list, pagingId: "preview")
 private let listNoIssue = SnapshotEntry(date: .now, snapshot: noIssue, layout: .list)
 #Preview("코인 · 홈 2×2 시안", as: .systemSmall) { CoinWidget() } timeline: { single; singleNoIssue; list; listNoIssue }
