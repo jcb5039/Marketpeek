@@ -909,6 +909,8 @@ struct ItemIcon: View {
 struct Backdrop {
     let image: UIImage
     let style: LogoBackground
+    /// "로고 색" 배경에 쓸 색 (0~1). nil이면 로고 평균 색. 국기는 평균이 칙칙한 회색이 되므로 통화 대표 색을 준다.
+    var color: (Double, Double, Double)? = nil
 
     /// 코인 위젯: 위젯 편집 순서가 가리키는 코인의 로고 (위젯 Assets `coin-<기호>`).
     static func coin(_ e: SnapshotEntry) -> Backdrop? {
@@ -931,8 +933,10 @@ struct Backdrop {
     static func fx(_ e: SnapshotEntry) -> Backdrop? {
         guard e.background != .plain, let s = e.snapshot else { return nil }
         let fxs = s.fxList ?? (s.fx.map { [$0] } ?? [])
-        guard !fxs.isEmpty, let img = flagImage(fxs[e.offset % fxs.count].code) else { return nil }
-        return Backdrop(image: img, style: e.background)
+        guard !fxs.isEmpty else { return nil }
+        let code = fxs[e.offset % fxs.count].code
+        guard let img = flagImage(code) else { return nil }
+        return Backdrop(image: img, style: e.background, color: ItemTint.fxColor(code))
     }
 
     static func flagImage(_ code: String) -> UIImage? {
@@ -973,7 +977,7 @@ struct LogoBackdrop: View {
                     LinearGradient(colors: [.black.opacity(0.35), .black.opacity(0.7)],
                                    startPoint: .top, endPoint: .bottom)
                 case .color:
-                    let c = Self.averageColor(backdrop.image) ?? (0.3, 0.3, 0.32)
+                    let c = backdrop.color ?? Self.averageColor(backdrop.image) ?? (0.3, 0.3, 0.32)
                     LinearGradient(colors: [rgb(c, 0.85), rgb(c, 0.4)], startPoint: .top, endPoint: .bottom)
                 case .blur:
                     logo.scaledToFill()
@@ -1034,6 +1038,9 @@ enum ItemTint {
             return nil
         }
     }
+
+    /// 통화 대표 색 (0~1). 환율 위젯 "로고 색" 배경에도 쓴다.
+    static func fxColor(_ code: String) -> (Double, Double, Double)? { fx[code] }
 
     private static func rgb(_ c: (Double, Double, Double)) -> Color {
         Color(red: c.0, green: c.1, blue: c.2)
