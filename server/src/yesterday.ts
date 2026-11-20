@@ -1,6 +1,7 @@
 // AI 어제 이슈의 재료: 한국 기준 어제 주요 코인(업비트)과 환율이 얼마나 움직였는지 모은다.
 // 코인 목록은 사용자별 관심 목록이 아니라 wrangler.toml ISSUE_COINS의 고정 목록이다.
 import { kstDate, type FxQuote } from './eximbank';
+import type { MarketMove } from './markets';
 
 export interface CoinMove {
   symbol: string;
@@ -19,6 +20,8 @@ export interface YesterdayData {
   fx: Record<string, FxQuote>;
   /// 환율 캐시 시각. 캐시가 없으면 null.
   fxUpdatedAt: string | null;
+  /// 전날 미국 시장 반응(S&P500·나스닥·VIX·10년물). 받는 데 실패한 것은 빠진다.
+  markets: MarketMove[];
 }
 
 interface UpbitDayCandle {

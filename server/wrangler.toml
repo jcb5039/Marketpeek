@@ -21,4 +21,5 @@ FX_CODES = "USD,JPY,EUR,CNY,THB,GBP,CHF,CAD,AUD,NZD,HKD,SGD,IDR,MYR,BND,AED,SAR,
 ISSUE_COINS = "BTC,ETH,XRP,SOL,DOGE"
 
 # 비밀 키는 여기 적지 않는다. 배포용: npx wrangler secret put EXIM_API_KEY
+#                                    npx wrangler secret put FRED_API_KEY (선택, 지수용)
 # 로컬용: .dev.vars 파일 (git에 올리지 않음, .dev.vars.example 참고)
