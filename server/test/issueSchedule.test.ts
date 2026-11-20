@@ -12,7 +12,7 @@ describe('planIssue: 요일별 처리', () => {
     const p = planIssue(at7('2026-11-17'));
     expect(p).toMatchObject({
       mode: 'session', kstDate: '2026-11-17', usDate: '2026-11-16', lastSessionDate: '2026-11-16',
-      label: '11/16 월 미국장', checkSurprise: false, watchCryptoMove: false, showWeekSchedule: false,
+      label: '11/16 월 미국장', checkSurprise: false, watchCryptoMove: false,
     });
   });
 
@@ -31,15 +31,16 @@ describe('planIssue: 요일별 처리', () => {
     expect(planIssue(at7('2026-11-22'))).toMatchObject({
       mode: 'closed', usDate: '2026-11-21', lastSessionDate: '2026-11-20',
       label: '주말', fallbackLabel: '11/20 금 미국장 기준',
-      checkSurprise: false, watchCryptoMove: true, showWeekSchedule: false,
+      checkSurprise: false, watchCryptoMove: true,
     });
   });
 
-  it('한국 월요일 = 주말, 큰 일이 없으면 이번 주 일정', () => {
+  it('한국 월요일 = 주말, 주말 뉴스·코인 움직임으로 요약(이번 주 일정 없음)', () => {
+    expect(planIssue(at7('2026-11-23'))).not.toHaveProperty('showWeekSchedule');
     expect(planIssue(at7('2026-11-23'))).toMatchObject({
       mode: 'weekend', usDate: '2026-11-22', lastSessionDate: '2026-11-20',
       label: '주말', fallbackLabel: '11/20 금 미국장 기준',
-      checkSurprise: false, watchCryptoMove: true, showWeekSchedule: true,
+      checkSurprise: false, watchCryptoMove: true,
     });
   });
 });

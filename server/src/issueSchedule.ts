@@ -2,7 +2,7 @@
 // 기준(형, 2026-11-20):
 // - 화~토: 전날(미국 월~금) 미국장을 요약한다.
 // - 일: 미국 토요일(휴장). 큰 일·코인 큰 움직임이 있으면 그것, 없으면 직전 요약 유지 + "금 미국장 기준" 표시.
-// - 월: 주말. 큰 일·코인 큰 움직임이 있으면 그것, 없으면 "이번 주 주요 일정".
+// - 월: 주말. 주말 뉴스(큰 일)·코인 큰 움직임으로 요약한다. "이번 주 일정"은 보여 주지 않는다(형, 11-20: 그날그날 뉴스만).
 // - 미국 휴장일은 일요일처럼 처리한다.
 // - 미국 월요일 장(한국 화요일 아침)은 경제지표 '놀라움' 기준을 건너뛴다.
 // 외부 호출 없이 날짜 계산만 한다.
@@ -28,7 +28,7 @@ export type IssueMode =
   | 'session'
   /// 전날 미국장이 휴장(토요일 또는 휴장일): 큰 일·코인 큰 움직임이 없으면 직전 요약을 유지한다.
   | 'closed'
-  /// 한국 월요일 아침(주말): 큰 일·코인 큰 움직임이 없으면 이번 주 주요 일정을 보여 준다.
+  /// 한국 월요일 아침(주말): 주말 뉴스와 코인 큰 움직임으로 요약한다. 없으면 직전 요약을 유지한다.
   | 'weekend';
 
 export interface IssuePlan {
@@ -47,8 +47,6 @@ export interface IssuePlan {
   checkSurprise: boolean;
   /// 코인 큰 움직임(예: 비트코인 ±5%)을 따로 볼지. 휴장일·주말만 true.
   watchCryptoMove: boolean;
-  /// 큰 일이 없을 때 이번 주 주요 일정을 보여 줄지(weekend 만 true).
-  showWeekSchedule: boolean;
   /// 이 연도의 휴장일 목록이 있는지. false 면 US_MARKET_HOLIDAYS 를 채워야 한다.
   holidaysKnown: boolean;
 }
@@ -110,20 +108,20 @@ export function planIssue(now: Date): IssuePlan {
     // 한국 월요일 아침 = 미국 일요일. 주말 전체를 본다.
     return {
       ...base, mode: 'weekend', label: '주말',
-      checkSurprise: false, watchCryptoMove: true, showWeekSchedule: true,
+      checkSurprise: false, watchCryptoMove: true,
     };
   }
   if (isUsTradingDay(usDate)) {
     return {
       ...base, mode: 'session', label: `${shortDayLabel(usDate)} 미국장`,
       // 미국 월요일 장은 경제지표 발표가 드물어 '놀라움'을 건너뛴다.
-      checkSurprise: weekday(usDate) !== 1, watchCryptoMove: false, showWeekSchedule: false,
+      checkSurprise: weekday(usDate) !== 1, watchCryptoMove: false,
     };
   }
   // 한국 일요일(미국 토요일) 또는 평일 휴장일.
   const label = weekday(usDate) === 6 ? '주말' : `${shortDayLabel(usDate)} 미국 휴장`;
   return {
     ...base, mode: 'closed', label,
-    checkSurprise: false, watchCryptoMove: true, showWeekSchedule: false,
+    checkSurprise: false, watchCryptoMove: true,
   };
 }
