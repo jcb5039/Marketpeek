@@ -335,6 +335,12 @@ struct HomeItem: Hashable {
         var value: String
     }
 
+    /// 환율 항목인지 (국기 아이콘). 2×2 한 종목에서 환율 전용 배치를 쓴다.
+    var isFx: Bool {
+        if case .flag = icon { return true }
+        return false
+    }
+
     init(icon: ItemIcon.Kind, symbol: String, name: String, price: String, sub: String? = nil,
          listPrice: String, listSub: String? = nil, change: Double?, info: [Pair] = []) {
         self.icon = icon; self.symbol = symbol; self.name = name; self.price = price; self.sub = sub
@@ -424,10 +430,14 @@ struct HomeCard: View {
         let hasIssue = issue != nil
         let shown = WidgetPaging.window(items, start: offset,
                                         size: WidgetPaging.pageSize(family, layout: layout, hasIssue: hasIssue))
+        // 환율 2×2 한 종목: 차트·이슈 줄 없이 이름·환율 / 기준·등락률 / 최근 업데이트 (시각은 아래로).
+        let fxSmall = family == .systemSmall && layout == .single && (shown.first?.isFx ?? false)
         VStack(alignment: .leading, spacing: 0) {
-            header(layout == .list ? (listTitle ?? title) : title)
+            header(layout == .list ? (listTitle ?? title) : title, showTime: !fxSmall)
             Group {
-                if layout == .single, let item = shown.first {
+                if fxSmall, let item = shown.first {
+                    fxSingleSmall(item)
+                } else if layout == .single, let item = shown.first {
                     switch family {
                     case .systemLarge: singleLarge(item)
                     case .systemMedium: singleMedium(item)
@@ -443,7 +453,7 @@ struct HomeCard: View {
                     }
                 }
             }
-            if let issue { issueFooter(issue) }
+            if let issue, !fxSmall { issueFooter(issue) }
         }
         .lineLimit(1)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -454,11 +464,11 @@ struct HomeCard: View {
 
     // MARK: 제목 줄: 제목 ······ 15:35 ↻ ›
 
-    private func header(_ text: String) -> some View {
+    private func header(_ text: String, showTime: Bool = true) -> some View {
         HStack(spacing: 4) {
             Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
             Spacer(minLength: 4)
-            if snapshot.settings.showUpdatedAt, let t = snapshot.updatedAt {
+            if showTime, snapshot.settings.showUpdatedAt, let t = snapshot.updatedAt {
                 Text(Fmt.hm(t)).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
             }
             RefreshButton()
@@ -501,6 +511,40 @@ struct HomeCard: View {
 
     private func bigPrice(_ s: String, _ size: CGFloat) -> some View {
         Text(s).font(.system(size: size, weight: .bold)).monospacedDigit().minimumScaleFactor(0.5)
+    }
+
+    /// 환율 2×2 한 종목: (가운데) 🇺🇸 USD / 1,333.7 ··· ▲0.10% / 최근 업데이트: 15:35
+    private func fxSingleSmall(_ item: HomeItem) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Spacer(minLength: 0)
+            // 국기·코드는 가운데, 그 아래 줄에 가격(왼쪽)과 등락률(오른쪽).
+            HStack {
+                Spacer(minLength: 0)
+                nameLine(item, icon: 22, font: 20, showName: false)
+                Spacer(minLength: 0)
+            }
+            // 가격은 '원'을 빼고 소수점 한 자리, 폭이 좁은 기본 숫자로 크게. 좁으면 가격이 먼저 줄어든다.
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(Self.oneDecimal(item.price))
+                    .font(.system(size: 24, weight: .bold))
+                    .minimumScaleFactor(0.5)
+                Spacer(minLength: 2)
+                change(item.change, 13)
+                    .fixedSize()
+            }
+            Spacer(minLength: 0)
+            if snapshot.settings.showUpdatedAt {
+                Text("최근 업데이트: \(snapshot.updatedAt.map(Fmt.hm) ?? "—")")
+                    .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// 환율 2×2 가격: '원'을 빼고 소수점 한 자리로 반올림 ("1,331.10원" → "1,331.1"). 숫자가 아니면 그대로.
+    static func oneDecimal(_ price: String) -> String {
+        let raw = Fmt.dropWon(price) ?? price
+        guard let v = Double(raw.replacingOccurrences(of: ",", with: "")) else { return raw }
+        return v.formatted(.number.precision(.fractionLength(1)).grouping(.automatic))
     }
 
     private func singleSmall(_ item: HomeItem) -> some View {
