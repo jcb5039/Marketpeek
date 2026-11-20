@@ -513,27 +513,25 @@ struct HomeCard: View {
         Text(s).font(.system(size: size, weight: .bold)).monospacedDigit().minimumScaleFactor(0.5)
     }
 
-    /// 환율 2×2 한 종목: 🇺🇸 USD ··· 1,333.7 / 1 USD 기준 ··· ▲0.10% / 최근 업데이트: 15:35
+    /// 환율 2×2 한 종목: (가운데) 🇺🇸 USD / 1,333.7 ··· ▲0.10% / 최근 업데이트: 15:35
     private func fxSingleSmall(_ item: HomeItem) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Spacer(minLength: 0)
-            // 아래 줄에 "1 USD 기준"이 있으니 가격은 '원'을 빼고 크게.
-            // 이름(국기·코드)은 줄이지 않고, 가격이 남는 폭에 맞춰 줄어든다.
-            // 가격은 폭이 좁은 기본 숫자(monospacedDigit 아님)로 한 글자라도 크게.
-            HStack(spacing: 4) {
-                nameLine(item, icon: 14, font: 13, showName: false)
-                    .fixedSize()
-                Spacer(minLength: 2)
-                Text(Self.oneDecimal(item.price))
-                    .font(.system(size: 20, weight: .bold))
-                    .minimumScaleFactor(0.5)
+            // 국기·코드는 가운데, 그 아래 줄에 가격(왼쪽)과 등락률(오른쪽).
+            HStack {
+                Spacer(minLength: 0)
+                nameLine(item, icon: 22, font: 20, showName: false)
+                Spacer(minLength: 0)
             }
-            HStack(spacing: 4) {
-                if let sub = item.sub { Text(sub).font(.system(size: 11)).foregroundStyle(.secondary) }
+            // 가격은 '원'을 빼고 소수점 한 자리, 폭이 좁은 기본 숫자로 크게. 좁으면 가격이 먼저 줄어든다.
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(Self.oneDecimal(item.price))
+                    .font(.system(size: 24, weight: .bold))
+                    .minimumScaleFactor(0.5)
                 Spacer(minLength: 2)
                 change(item.change, 13)
+                    .fixedSize()
             }
-            .minimumScaleFactor(0.7)
             Spacer(minLength: 0)
             if snapshot.settings.showUpdatedAt {
                 Text("최근 업데이트: \(snapshot.updatedAt.map(Fmt.hm) ?? "—")")
