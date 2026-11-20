@@ -1,9 +1,10 @@
 // MarketPeek 시세 서버 진입점: 예약 실행(cron)으로 환율 캐시를 채우고 GET /quotes로 내려준다.
-// GET /issue는 AI 어제 이슈(지금은 예시 문장). GET /fx/history는 환율 차트용 날짜별 기록.
+// GET /issue는 AI 어제 이슈(매일 한국 7시에 만들어 KV에 저장, 없으면 예시). GET /fx/history는 환율 차트용 날짜별 기록.
 // 주식 시세는 앱이 한국투자증권 Open API에서 사용자 키로 직접 받는다 (Finnhub는 재배포 금지라 제거).
 import { fetchFx, kstDate, type FxQuote } from './eximbank';
 import { HISTORY_KEY, historyPoints, updateHistory, type FxHistory } from './fxHistory';
-import { sampleIssue } from './issue';
+import { sampleIssue, type Issue } from './issue';
+import { ISSUE_CRON, ISSUE_KEY, runIssueJob } from './issueJob';
 import { fetchMarketMoves } from './markets';
 import { dashed, fetchCoinMoves, type YesterdayData } from './yesterday';
 
@@ -15,6 +16,10 @@ export interface Env {
   EXIM_API_KEY: string;
   /// FRED 무료 API 키(S&P500·나스닥·VIX). 없으면 그 지수들은 건너뛴다.
   FRED_API_KEY?: string;
+  /// Workers AI(어제 이슈 요약). wrangler.toml [ai]. 없으면 숫자만 저장한다.
+  AI?: Ai;
+  /// (선택) 맨 먼저 시도할 Workers AI 모델 이름. 없으면 issueAi.ts ISSUE_MODELS 순서.
+  ISSUE_MODEL?: string;
 }
 
 interface Cached<T> {
@@ -30,7 +35,7 @@ export default {
     const url = new URL(req.url);
     if (req.method !== 'GET') return json({ error: 'method not allowed' }, 405);
     if (url.pathname === '/health') return json({ ok: true });
-    if (url.pathname === '/issue') return json(sampleIssue(new Date()));
+    if (url.pathname === '/issue') return json((await env.QUOTES.get<Issue>(ISSUE_KEY, 'json')) ?? sampleIssue(new Date()));
     if (url.pathname === '/fx/history') {
       const code = list(url.searchParams.get('code'))[0];
       if (!code) return json({ error: 'code required' }, 400);
@@ -43,22 +48,35 @@ export default {
       if (!isLocal(url)) return json({ error: 'not found' }, 404);
       return json(await collectYesterday(env, new Date()));
     }
+    // 7시 이슈 작업을 지금 바로 한 번 돌려 결과를 본다(AI 호출·KV 저장 포함). 로컬에서만.
+    if (url.pathname === '/issue/run') {
+      if (!isLocal(url)) return json({ error: 'not found' }, 404);
+      return json(await runIssueJob(env, new Date()));
+    }
     if (url.pathname !== '/quotes') return json({ error: 'not found' }, 404);
 
-    let fx = await env.QUOTES.get<Cached<FxQuote>>('fx', 'json');
+    let [fx, issue] = await Promise.all([
+      env.QUOTES.get<Cached<FxQuote>>('fx', 'json'),
+      env.QUOTES.get<Issue>(ISSUE_KEY, 'json'),
+    ]);
     // 배포 직후 cron이 아직 안 돌았으면 한 번 직접 채운다.
     if (!fx) ({ fx } = await refresh(env, new Date()));
 
     return json({
       fx: pick(fx?.data, list(url.searchParams.get('fx'))),
-      // AI 어제 이슈는 아직 예시뿐이라(GET /issue) 앱·위젯에 진짜처럼 뜨지 않게 null로 둔다.
-      // 실제 요약이 생기면 { text, shortText, generatedAt }.
-      issue: null,
+      // AI 어제 이슈: 실제로 만든 요약만 내려준다(예시 문장은 앱·위젯에 진짜처럼 뜨지 않게 null).
+      // { text, shortText, generatedAt, label, items, credit, ... } — 앱은 text·shortText·generatedAt 을 읽는다.
+      issue: issue && !issue.sample ? issue : null,
       fxUpdatedAt: fx?.updatedAt ?? null,
     });
   },
 
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // 한국 7시(UTC 22:00)에는 AI 어제 이슈도 만든다. 매시 정각 환율 갱신은 따로 돈다.
+    if (event.cron === ISSUE_CRON) {
+      ctx.waitUntil(runIssueJob(env, new Date()).then(() => undefined));
+      return;
+    }
     ctx.waitUntil(refresh(env, new Date()).then(() => undefined));
   },
 };

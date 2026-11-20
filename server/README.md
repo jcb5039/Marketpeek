@@ -52,7 +52,8 @@ npm run dev         # http://localhost:8787, 예약 실행은 curl 'localhost:87
 ## 무료 플랜 한도
 
 - 요청 하루 10만 회. 넘으면 막힐 뿐 과금되지 않습니다.
-- KV 쓰기 하루 1,000회. 지금 설정은 하루 약 48회입니다(1시간마다 환율 1회 + 환율 기록 1회). cron 간격을 바꿀 때 확인하세요.
+- KV 쓰기 하루 1,000회. 지금 설정은 하루 약 49회입니다(1시간마다 환율 1회 + 환율 기록 1회 + 한국 7시 AI 이슈 1회). cron 간격을 바꿀 때 확인하세요.
+- Workers AI 하루 10,000 뉴런. AI 이슈는 하루 1번이라 수십 뉴런 정도입니다.
 - 수출입은행은 하루 1,000회입니다. 환율 기록은 1시간에 최대 6회(오늘 1 + 지난 날짜 5) 더 부릅니다.
 
 ## 응답 형식
@@ -66,7 +67,7 @@ npm run dev         # http://localhost:8787, 예약 실행은 curl 'localhost:87
 ```
 
 - `fx.JPY`는 100엔 기준입니다. 위안화(CNY)는 수출입은행의 CNH 고시 값입니다.
-- `issue`(AI 어제 이슈)는 아직 예시뿐이라 앱·위젯에 진짜처럼 뜨지 않도록 항상 `null`입니다.
+- `issue`(AI 어제 이슈)는 한국 7시 작업이 실제로 만든 요약이 있을 때만 들어가고, 아직 없으면 `null`입니다(예시 문장은 넣지 않음). 형식은 아래 `GET /issue`.
 
 ### `GET /fx/history?code=USD&days=30` (환율 차트용 기록)
 
@@ -80,20 +81,35 @@ npm run dev         # http://localhost:8787, 예약 실행은 curl 'localhost:87
 
 ### `GET /issue` (AI 어제 이슈)
 
-지금은 고정된 예시 문장을 돌려줍니다(`sample: true`). 실제 요약은 다음 단계에서 하루 1번 만들어 KV에 저장할 예정입니다.
+매일 한국 7시(cron `0 22 * * *`)에 만들어 KV `issue`에 저장한 요약입니다. 아직 한 번도 만들지 않았으면 예시(`sample: true`)를 줍니다.
 
 ```json
 {
-  "text": "(예시) 어제 비트코인은 미국 금리 동결 소식에 올랐어요.",
-  "shortText": "(예시) 비트코인, 금리 동결에 상승",
-  "generatedAt": "2026-11-16T00:00:00.000Z",
-  "date": "2026-11-15",
-  "sample": true
+  "text": "…다우 지수가 급락하는 등 미 증시가 하락세를 보인 영향으로 풀이됩니다.",
+  "shortText": "미 증시 급락 · 비트코인 하락",
+  "generatedAt": "2026-11-19T22:00:05.000Z",
+  "date": "2026-11-19",
+  "sample": false,
+  "label": "11/19 목 미국장",
+  "items": [{ "text": "…", "shortText": "…" }],
+  "basis": "news",
+  "credit": { "name": "GDELT Project", "url": "https://www.gdeltproject.org/" },
+  "sources": [{ "title": "Wall Street Slump Continues as Dow Falls Over 1,100 Points", "url": "https://…", "domain": "…" }]
 }
 ```
 
-- `date`는 요약 대상 날짜로, 한국 기준 어제입니다.
-- 문구는 "무엇이 왜 움직였는지"만 씁니다. 종목 추천·투자 권유로 읽힐 표현은 쓰지 않습니다.
+- 위젯·라이브 액티비티는 `shortText`(1위 한 줄, 1·2위가 비슷하면 " · "로 함께), 앱은 `items`(최대 3개)를 씁니다. 제목 옆에는 `label`.
+- `date`는 요약한 미국장 날짜입니다. 휴장·주말에 큰 일이 없으면 직전 요약을 유지하고 `label`이 "11/20 금 미국장 기준"처럼 바뀝니다(`basis: "kept"`).
+- `basis`: `news`(뉴스 + 숫자로 AI 요약), `numbers`(AI 실패·뉴스 없음 등으로 숫자만), `kept`(직전 요약 유지).
+- **`basis`가 `news`면 `credit`(GDELT Project + 링크)을 화면에 표시해야 합니다(GDELT 이용 조건).**
+- 문구는 "무엇이 왜 움직였는지"만 씁니다. 투자 권유·단정 표현이 있으면 서버가 AI 답을 버리고 숫자만 저장합니다.
+- 뉴스는 GDELT 영어 기사 제목만 씁니다. 네이버 검색 API는 약관(검색 API 특약 2.3)이 AI 입력을 금지해 쓰지 않습니다.
+- AI 모델은 `src/issueAi.ts`의 `ISSUE_MODELS` 순서로 시도합니다(앞 모델이 폐기되면 다음 모델). `wrangler.toml`에 `ISSUE_MODEL`을 넣으면 그 모델을 먼저 씁니다.
+
+### `GET /issue/run` (이슈 바로 만들기, 로컬 전용)
+
+7시 작업을 지금 한 번 돌려 결과를 돌려줍니다(AI 호출과 로컬 KV 저장 포함). `npm run dev`에서만 열립니다.
+Workers AI 는 로컬에서도 실제 Cloudflare 계정을 쓰므로 `npx wrangler login` 이 필요합니다. 20초~1분쯤 걸립니다.
 
 ### `GET /issue/data` (이슈 재료, 로컬 전용)
 

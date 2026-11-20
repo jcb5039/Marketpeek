@@ -1,5 +1,5 @@
-// AI 어제 이슈. 1단계에서는 고정된 예시 문장만 돌려준다(sample: true).
-// 다음 단계에서 어제 코인·환율 등락을 모으고 AI 요약을 하루 1번 만들어 KV에 저장한다.
+// AI 어제 이슈. 매일 한국 7시에 issueJob.ts 가 만들어 KV('issue')에 저장한다.
+// 아직 한 번도 만들지 않았으면 고정된 예시 문장(sample: true)을 돌려준다.
 // 문구는 "무엇이 왜 움직였는지"만 쓴다. 종목 추천·투자 권유로 읽힐 표현 금지.
 import { kstDate } from './eximbank';
 
@@ -14,6 +14,15 @@ export interface Issue {
   date: string;
   /// 예시 데이터면 true. 실제 요약이 생기면 false.
   sample: boolean;
+  /// 제목 옆 기준 날짜. 예: "11/14 금 미국장", "주말", "11/20 금 미국장 기준"(직전 요약 유지).
+  label?: string;
+  /// 순위대로 최대 3개(앱 화면용). text·shortText 는 위젯용 1위 줄.
+  items?: { text: string; shortText: string }[];
+  /// news: 뉴스+숫자로 AI 요약, numbers: 숫자만, kept: 직전 요약 유지.
+  basis?: 'news' | 'numbers' | 'kept';
+  /// 뉴스를 썼으면 출처 표시(GDELT 약관상 필수)와 근거 기사 몇 개.
+  credit?: { name: string; url: string };
+  sources?: { title: string; url: string; domain: string }[];
 }
 
 export function sampleIssue(now: Date): Issue {
