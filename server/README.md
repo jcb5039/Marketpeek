@@ -58,6 +58,8 @@ npm run dev         # http://localhost:8787, 예약 실행은 curl 'localhost:87
 
 ## 응답 형식
 
+> 앱에서 쓰는 모든 주소·필드·화면 표시 규칙은 **[`API.md`](API.md)(서버 API 설명서)** 에 정리되어 있습니다. 아래는 요약입니다.
+
 ```json
 {
   "fx": { "USD": { "rateKrw": 1430.5, "changePct": 0.4 }, "JPY": { "rateKrw": 950.0, "changePct": -0.2 } },
@@ -121,7 +123,8 @@ AI 요약의 재료인 한국 기준 어제의 주요 코인 등락(업비트 �
   "date": "2026-11-15",
   "coins": [{ "symbol": "BTC", "closeKrw": 89949000, "changePct": 1.23 }],
   "fx": { "USD": { "rateKrw": 1430.5, "changePct": 0.4 } },
-  "fxUpdatedAt": "2026-11-16T00:30:00.000Z"
+  "fxUpdatedAt": "2026-11-16T00:30:00.000Z",
+  "markets": [{ "id": "US10Y", "name": "미국 10년물 금리", "close": 5.04, "change": -0.03, "changePct": null, "…": "…" }]
 }
 ```
 

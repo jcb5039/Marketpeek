@@ -72,7 +72,7 @@ npm test        # 단위 테스트 (외부 API는 부르지 않음)
 npm run dev     # http://localhost:8787
 ```
 
-배포 방법, API 응답 형식, 무료 플랜 한도는 [`server/README.md`](server/README.md)에 있습니다.
+배포 방법과 무료 플랜 한도는 [`server/README.md`](server/README.md), 앱에서 쓰는 API 주소·필드는 [`server/API.md`](server/API.md)(서버 API 설명서)에 있습니다.
 
 ## 팀
 
