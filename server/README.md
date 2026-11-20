@@ -22,6 +22,7 @@ npm install
 npx wrangler login                      # 브라우저로 Cloudflare 로그인
 npx wrangler kv namespace create QUOTES # 출력된 id를 wrangler.toml의 REPLACE_WITH_KV_ID 자리에 붙여넣기
 npx wrangler secret put EXIM_API_KEY    # 키 붙여넣기 (화면에 안 보임)
+npx wrangler secret put FRED_API_KEY    # (선택) AI 이슈용 S&P500·나스닥·VIX. FRED 무료 키
 npm run deploy                          # 출력된 https://marketpeek-api.<계정>.workers.dev 주소를 기억
 ```
 

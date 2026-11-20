@@ -4,6 +4,7 @@
 import { fetchFx, kstDate, type FxQuote } from './eximbank';
 import { HISTORY_KEY, historyPoints, updateHistory, type FxHistory } from './fxHistory';
 import { sampleIssue } from './issue';
+import { fetchMarketMoves } from './markets';
 import { dashed, fetchCoinMoves, type YesterdayData } from './yesterday';
 
 export interface Env {
@@ -12,6 +13,8 @@ export interface Env {
   /// AI 어제 이슈 재료로 쓸 코인 (업비트 원화 마켓 심볼).
   ISSUE_COINS: string;
   EXIM_API_KEY: string;
+  /// FRED 무료 API 키(S&P500·나스닥·VIX). 없으면 그 지수들은 건너뛴다.
+  FRED_API_KEY?: string;
 }
 
 interface Cached<T> {
@@ -90,21 +93,24 @@ export async function refresh(env: Env, now: Date): Promise<{ fx: Cached<FxQuote
   return { fx };
 }
 
-/// AI 어제 이슈 재료: 어제 주요 코인 등락(업비트) + 캐시된 환율 등락(새로 받지 않음).
+/// AI 어제 이슈 재료: 어제 주요 코인 등락(업비트) + 캐시된 환율 등락(새로 받지 않음)
+/// + 전날 미국 시장 반응(FRED 지수, 미 재무부 10년물).
 export async function collectYesterday(
   env: Env,
   now: Date,
   fetchFn: typeof fetch = fetch,
 ): Promise<YesterdayData> {
-  const [coins, fx] = await Promise.all([
+  const [coins, fx, markets] = await Promise.all([
     fetchCoinMoves(list(env.ISSUE_COINS), now, fetchFn),
     env.QUOTES.get<Cached<FxQuote>>('fx', 'json'),
+    fetchMarketMoves(env.FRED_API_KEY, now, fetchFn),
   ]);
   return {
     date: dashed(kstDate(now, 1)),
     coins,
     fx: fx?.data ?? {},
     fxUpdatedAt: fx?.updatedAt ?? null,
+    markets,
   };
 }
 

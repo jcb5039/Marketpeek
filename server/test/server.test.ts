@@ -197,7 +197,9 @@ describe('어제 이슈 재료', () => {
     expect(data.coins.map((c) => c.symbol)).toEqual(['BTC', 'ETH']);
     expect(data.fx).toEqual({ USD: { rateKrw: 1430.5, changePct: 0.4 } });
     expect(data.fxUpdatedAt).toBe('2026-11-16T00:30:00Z');
-    expect(upbit.mock.calls.every(([u]) => String(u).includes('api.upbit.com'))).toBe(true);
+    expect(upbit.mock.calls.some(([u]) => String(u).includes('koreaexim'))).toBe(false);
+    // FRED 키가 없으면 지수는 건너뛰고(이 mock 에선 10년물도 실패) markets 는 비어 있다.
+    expect(data.markets).toEqual([]);
   });
 
   it('/issue/data는 배포 주소에서는 404', async () => {

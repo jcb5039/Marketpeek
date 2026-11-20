@@ -1,2 +1,4 @@
 # 이 파일을 .dev.vars로 복사하고 키를 채운다 (.dev.vars는 git에 올라가지 않음).
 EXIM_API_KEY=
+# FRED 무료 키(https://fred.stlouisfed.org → My Account → API Keys). 비우면 S&P500·나스닥·VIX 를 건너뛴다.
+FRED_API_KEY=
