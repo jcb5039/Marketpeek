@@ -7,7 +7,7 @@ import {
 } from '../src/issueAi';
 import { ISSUE_CRON, ISSUE_KEY, runIssueJob, type AiRunner } from '../src/issueJob';
 import { planIssue } from '../src/issueSchedule';
-import { cleanTitle, fetchHeadlines, parseGdelt } from '../src/news';
+import { cleanTitle, fetchHeadlines, GDELT_GAP_MS, INDICATOR_LIMIT, parseGdelt } from '../src/news';
 import type { YesterdayData } from '../src/yesterday';
 
 const jsonRes = (body: unknown, status = 200) =>
@@ -15,6 +15,8 @@ const jsonRes = (body: unknown, status = 200) =>
 
 afterEach(() => vi.restoreAllMocks());
 const quiet = () => vi.spyOn(console, 'warn').mockImplementation(() => {});
+/// GDELT 두 번째 검색 전 6초를 실제로 기다리지 않게 한다.
+const noWait = async () => {};
 
 const data: YesterdayData = {
   date: '2026-11-19',
@@ -83,6 +85,56 @@ describe('GDELT 뉴스', () => {
     expect(await fetchHeadlines(1, text as unknown as typeof fetch, async () => {})).toEqual([]);
     const busy = async () => new Response('busy', { status: 429 });
     expect(await fetchHeadlines(1, busy as unknown as typeof fetch, async () => {})).toEqual([]);
+  });
+
+  describe('경제지표 기사 따로 검색', () => {
+    const art = (title: string) => ({ url: `https://x.com/${encodeURIComponent(title)}`, title, domain: 'x.com' });
+    /// 주요 검색과 지표 검색을 검색어로 구분해 다른 기사를 준다.
+    const gdelt = (main: unknown, indicator: unknown) => vi.fn(async (url: string) => {
+      const q = new URL(url).searchParams.get('query') ?? '';
+      const body = q.includes('payrolls') ? indicator : main;
+      return body instanceof Response ? body : jsonRes(body);
+    });
+
+    it('지표를 보는 날: 6초 쉬고 지표 기사를 뒤에 붙임(같은 제목은 뺌)', async () => {
+      const f = gdelt(
+        { articles: [art('Wall Street slumps'), art('Dow falls 500 points')] },
+        { articles: [art('CPI rises in line with expectations'), art('Wall Street slumps')] },
+      );
+      const wait = vi.fn(async () => {});
+      const out = await fetchHeadlines(1, f as unknown as typeof fetch, wait, { indicators: true });
+      expect(out.map((h) => h.title)).toEqual(['Wall Street slumps', 'Dow falls 500 points', 'CPI rises in line with expectations']);
+      expect(f).toHaveBeenCalledTimes(2);
+      expect(wait).toHaveBeenCalledWith(GDELT_GAP_MS);
+    });
+
+    it('지표 기사는 최대 INDICATOR_LIMIT 개', async () => {
+      const many = Array.from({ length: 20 }, (_, i) => art(`Payrolls report ${i}`));
+      const f = gdelt({ articles: [art('Stocks rise')] }, { articles: many });
+      const out = await fetchHeadlines(1, f as unknown as typeof fetch, noWait, { indicators: true });
+      expect(out).toHaveLength(1 + INDICATOR_LIMIT);
+    });
+
+    it('지표를 안 보는 날(기본값)은 한 번만 검색', async () => {
+      const f = gdelt({ articles: [art('Stocks rise')] }, { articles: [art('CPI hotter')] });
+      const out = await fetchHeadlines(1, f as unknown as typeof fetch, noWait);
+      expect(out.map((h) => h.title)).toEqual(['Stocks rise']);
+      expect(f).toHaveBeenCalledTimes(1);
+    });
+
+    it('지표 검색만 실패하면 주요 기사는 그대로', async () => {
+      quiet();
+      const f = gdelt({ articles: [art('Stocks rise')] }, new Response('busy', { status: 500 }));
+      const out = await fetchHeadlines(1, f as unknown as typeof fetch, noWait, { indicators: true });
+      expect(out.map((h) => h.title)).toEqual(['Stocks rise']);
+    });
+
+    it('첫 검색이 막히면 지표 검색은 하지 않음', async () => {
+      quiet();
+      const busy = vi.fn(async () => new Response('busy', { status: 429 }));
+      expect(await fetchHeadlines(1, busy as unknown as typeof fetch, noWait, { indicators: true })).toEqual([]);
+      expect(busy).toHaveBeenCalledTimes(2); // 첫 검색 + 429 재시도 한 번
+    });
   });
 });
 
@@ -216,7 +268,7 @@ describe('하루 작업(runIssueJob)', () => {
     quiet();
     const e = env();
     const ai = aiReturning(good);
-    const issue = await runIssueJob(e, thu7, { fetchFn: routes(news) as unknown as typeof fetch, ai });
+    const issue = await runIssueJob(e, thu7, { fetchFn: routes(news) as unknown as typeof fetch, wait: noWait, ai });
     expect(issue).toMatchObject({
       shortText: '금리 인하 기대 약화에 나스닥 하락', sample: false, basis: 'news',
       label: '11/19 목 미국장', date: '2026-11-19', credit: { name: 'GDELT Project' },
@@ -230,7 +282,7 @@ describe('하루 작업(runIssueJob)', () => {
     quiet();
     const e = env();
     const issue = await runIssueJob(e, thu7, {
-      fetchFn: routes(news) as unknown as typeof fetch,
+      fetchFn: routes(news) as unknown as typeof fetch, wait: noWait,
       ai: aiReturning(good.replace('나스닥 하락"', '매수 기회"')),
     });
     expect(issue).toMatchObject({ basis: 'numbers', label: '11/19 목 미국장' });
@@ -243,14 +295,14 @@ describe('하루 작업(runIssueJob)', () => {
     const run = vi.fn()
       .mockRejectedValueOnce(new Error('5028: deprecated'))
       .mockResolvedValueOnce({ response: good });
-    const issue = await runIssueJob(env(), thu7, { fetchFn: routes(news) as unknown as typeof fetch, ai: { run } });
+    const issue = await runIssueJob(env(), thu7, { fetchFn: routes(news) as unknown as typeof fetch, wait: noWait, ai: { run } });
     expect(issue?.basis).toBe('news');
     expect(run.mock.calls.map((c) => c[0])).toEqual(['@cf/google/gemma-4-26b-a4b-it', '@cf/zai-org/glm-4.7-flash']);
   });
 
   it('숫자만일 때 금리 등락(bp)도 남김', async () => {
     quiet();
-    const issue = await runIssueJob(env(), thu7, { fetchFn: routes(news) as unknown as typeof fetch });
+    const issue = await runIssueJob(env(), thu7, { fetchFn: routes(news) as unknown as typeof fetch, wait: noWait });
     expect(issue?.items?.map((i) => i.text)).toContain('미국 10년물 금리 5.04% -3bp');
   });
 
@@ -258,7 +310,7 @@ describe('하루 작업(runIssueJob)', () => {
     quiet();
     const broken: AiRunner = { run: async () => { throw new Error('quota'); } };
     for (const ai of [undefined, broken]) {
-      const issue = await runIssueJob(env(), thu7, { fetchFn: routes(news) as unknown as typeof fetch, ai });
+      const issue = await runIssueJob(env(), thu7, { fetchFn: routes(news) as unknown as typeof fetch, wait: noWait, ai });
       expect(issue?.basis).toBe('numbers');
     }
   });
@@ -279,7 +331,7 @@ describe('하루 작업(runIssueJob)', () => {
   it('장이 열린 날 keep 이면 받아들이지 않고 숫자만', async () => {
     quiet();
     const issue = await runIssueJob(env(), thu7, {
-      fetchFn: routes(news) as unknown as typeof fetch, ai: aiReturning('{"keep":true}'),
+      fetchFn: routes(news) as unknown as typeof fetch, wait: noWait, ai: aiReturning('{"keep":true}'),
     });
     expect(issue?.basis).toBe('numbers');
   });
@@ -292,9 +344,13 @@ describe('서버 연결', () => {
     const waits: Promise<unknown>[] = [];
     const ctx = { waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as ExecutionContext;
     vi.stubGlobal('fetch', routes([]));
+    // 평일 장이면 지표 검색 전 6초를 실제로 기다리므로 날짜를 일요일로 고정한다(Date 만 가짜).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-22T07:00:00+09:00'));
     await worker.scheduled({ cron: ISSUE_CRON } as ScheduledController, e, ctx);
     await Promise.all(waits);
     expect(e.kv.store.has(ISSUE_KEY)).toBe(true);
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 

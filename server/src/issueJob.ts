@@ -23,7 +23,7 @@ export interface AiRunner {
 export interface IssueJobDeps {
   fetchFn?: typeof fetch;
   ai?: AiRunner;
-  /// 테스트용: GDELT 429 재시도 대기.
+  /// 테스트용: GDELT 429 재시도·두 번째 검색 전 대기.
   wait?: (ms: number) => Promise<unknown>;
 }
 
@@ -35,7 +35,8 @@ export async function runIssueJob(env: Env, now: Date, deps: IssueJobDeps = {}):
 
   const [data, headlines, prev] = await Promise.all([
     collectYesterday(env, now, fetchFn),
-    fetchHeadlines(plan.mode === 'weekend' ? 2 : 1, fetchFn, deps.wait),
+    // 경제지표를 보는 날(화~금 미국장)에만 지표 기사를 따로 더 받는다.
+    fetchHeadlines(plan.mode === 'weekend' ? 2 : 1, fetchFn, deps.wait, { indicators: plan.checkSurprise }),
     env.QUOTES.get<Issue>(ISSUE_KEY, 'json'),
   ]);
   const allowKeep = plan.mode !== 'session';
