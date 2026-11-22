@@ -31,6 +31,14 @@ export const INDICATOR_LIMIT = 8;
 /// GDELT 는 "5초에 1번" 제한이 있다. 두 번째 검색 전에 이만큼 쉰다.
 export const GDELT_GAP_MS = 6_000;
 
+/// 429(막힘)일 때 다시 시도하기 전에 쉬는 시간. 길이 = 다시 시도 횟수.
+/// GDELT 제한은 IP 주소별인데 Cloudflare 는 여러 서비스가 IP 를 같이 써서, 우리가 처음 부를 때도 이미 막혀 있곤 하다
+/// (2026-11-22 Cloudflare 에서 실제로 6번 불러 4번 429, 한 번에 12~16초 걸림). 그래서 간격을 늘려 가며 여러 번 시도한다.
+/// 주요 기사: 최대 6번 시도, 쉬는 시간 합 약 3분. cron 은 시간 제한(15분) 안에서 충분하다.
+export const MAIN_RETRY_WAITS_MS = [6_000, 15_000, 30_000, 60_000, 60_000];
+/// 지표 기사: 없어도 요약은 되니 최대 4번만.
+export const INDICATOR_RETRY_WAITS_MS = [6_000, 15_000, 30_000];
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface GdeltArticle {
@@ -71,30 +79,35 @@ export function parseGdelt(body: unknown, limit = 25): Headline[] {
 
 type Wait = (ms: number) => Promise<unknown>;
 
-/// GDELT 검색 한 번. 429 면 6초 뒤 한 번만 다시 시도하고, 끝내 실패하면 null.
+/// GDELT 검색 한 번. 429 면 retryWaits 간격으로 다시 시도하고, 끝내 실패하면 null.
+/// 429 가 아닌 실패(다른 상태, JSON 아님, 연결 오류)는 다시 시도하지 않는다.
 async function searchGdelt(
-  query: string, days: number, maxrecords: number, limit: number, fetchFn: typeof fetch, wait: Wait, what: string,
+  query: string, days: number, maxrecords: number, limit: number,
+  fetchFn: typeof fetch, wait: Wait, what: string, retryWaits: readonly number[],
 ): Promise<Headline[] | null> {
   const url = 'https://api.gdeltproject.org/api/v2/doc/doc'
     + `?query=${encodeURIComponent(query)}&mode=artlist&format=json&maxrecords=${maxrecords}`
     + `&timespan=${days}d&sort=hybridrel`;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt <= retryWaits.length; attempt++) {
     try {
       const res = await fetchFn(url);
-      if (res.status === 429 && attempt === 0) {
-        await wait(GDELT_GAP_MS);
+      if (res.status === 429 && attempt < retryWaits.length) {
+        await wait(retryWaits[attempt]);
         continue;
       }
       if (!res.ok) throw new Error(`gdelt ${res.status}`);
       // GDELT 는 가끔 JSON 이 아닌 안내문을 돌려준다.
       const text = await res.text();
-      return parseGdelt(JSON.parse(text), limit);
+      const out = parseGdelt(JSON.parse(text), limit);
+      // 몇 번 만에 받았는지 남겨 Cloudflare 로그에서 막히는 정도를 본다.
+      if (attempt > 0) console.log(`${what}: ok after ${attempt + 1} tries`);
+      return out;
     } catch (e) {
       console.warn(`${what} failed: ${String(e)}`);
       return null;
     }
   }
-  console.warn(`${what} failed: gdelt 429`);
+  console.warn(`${what} failed: gdelt 429 x${retryWaits.length + 1}`);
   return null;
 }
 
@@ -107,12 +120,14 @@ export async function fetchHeadlines(
   wait: Wait = sleep,
   { indicators = false }: { indicators?: boolean } = {},
 ): Promise<Headline[]> {
-  const main = await searchGdelt(GDELT_QUERY, days, 60, 25, fetchFn, wait, 'headlines');
+  const main = await searchGdelt(GDELT_QUERY, days, 60, 25, fetchFn, wait, 'headlines', MAIN_RETRY_WAITS_MS);
   if (!main) return [];
   if (!indicators) return main;
 
   await wait(GDELT_GAP_MS);
-  const extra = await searchGdelt(INDICATOR_QUERY, days, 30, INDICATOR_LIMIT, fetchFn, wait, 'indicator headlines');
+  const extra = await searchGdelt(
+    INDICATOR_QUERY, days, 30, INDICATOR_LIMIT, fetchFn, wait, 'indicator headlines', INDICATOR_RETRY_WAITS_MS,
+  );
   const seen = new Set(main.map((h) => h.title.toLowerCase()));
   return [...main, ...(extra ?? []).filter((h) => !seen.has(h.title.toLowerCase()))];
 }

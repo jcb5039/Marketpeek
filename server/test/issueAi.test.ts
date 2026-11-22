@@ -7,7 +7,9 @@ import {
 } from '../src/issueAi';
 import { ISSUE_CRON, ISSUE_KEY, runIssueJob, type AiRunner } from '../src/issueJob';
 import { planIssue } from '../src/issueSchedule';
-import { cleanTitle, fetchHeadlines, GDELT_GAP_MS, INDICATOR_LIMIT, parseGdelt } from '../src/news';
+import {
+  cleanTitle, fetchHeadlines, GDELT_GAP_MS, INDICATOR_LIMIT, INDICATOR_RETRY_WAITS_MS, MAIN_RETRY_WAITS_MS, parseGdelt,
+} from '../src/news';
 import type { YesterdayData } from '../src/yesterday';
 
 const jsonRes = (body: unknown, status = 200) =>
@@ -68,15 +70,37 @@ describe('GDELT 뉴스', () => {
     expect(parseGdelt(body).map((h) => h.domain)).toEqual(['a.iheart.com']);
   });
 
-  it('429 면 한 번만 기다렸다 다시 시도', async () => {
+  it('429 면 간격을 늘려 가며 다시 시도(Cloudflare 는 IP 를 같이 써서 처음부터 막혀 있곤 함)', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const busy = () => new Response('Please limit requests', { status: 429 });
     const f = vi.fn()
-      .mockResolvedValueOnce(new Response('Please limit requests', { status: 429 }))
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(busy())
       .mockResolvedValueOnce(jsonRes({ articles: [{ url: 'https://a.com', title: 'Wall Street rallies', domain: 'a.com' }] }));
-    const wait = vi.fn(async () => {});
+    const wait = vi.fn(async (_ms: number) => {});
     const out = await fetchHeadlines(1, f as unknown as typeof fetch, wait);
     expect(out.map((h) => h.title)).toEqual(['Wall Street rallies']);
-    expect(wait).toHaveBeenCalledWith(6000);
+    expect(f).toHaveBeenCalledTimes(4);
+    expect(wait.mock.calls.map((c) => c[0])).toEqual([6000, 15000, 30000]);
     expect(String(f.mock.calls[0][0])).toContain('timespan=1d');
+  });
+
+  it('계속 429 면 최대 6번 시도하고 포기(빈 배열)', async () => {
+    quiet();
+    const busy = vi.fn(async () => new Response('busy', { status: 429 }));
+    const wait = vi.fn(async (_ms: number) => {});
+    expect(await fetchHeadlines(1, busy as unknown as typeof fetch, wait)).toEqual([]);
+    expect(busy).toHaveBeenCalledTimes(1 + MAIN_RETRY_WAITS_MS.length);
+    expect(MAIN_RETRY_WAITS_MS.length + 1).toBe(6);
+    expect(wait.mock.calls.map((c) => c[0])).toEqual(MAIN_RETRY_WAITS_MS);
+  });
+
+  it('429 가 아닌 실패는 다시 시도하지 않음', async () => {
+    quiet();
+    const down = vi.fn(async () => new Response('down', { status: 503 }));
+    expect(await fetchHeadlines(1, down as unknown as typeof fetch, noWait)).toEqual([]);
+    expect(down).toHaveBeenCalledTimes(1);
   });
 
   it('JSON 이 아닌 안내문이나 계속 429 면 빈 배열', async () => {
@@ -133,7 +157,19 @@ describe('GDELT 뉴스', () => {
       quiet();
       const busy = vi.fn(async () => new Response('busy', { status: 429 }));
       expect(await fetchHeadlines(1, busy as unknown as typeof fetch, noWait, { indicators: true })).toEqual([]);
-      expect(busy).toHaveBeenCalledTimes(2); // 첫 검색 + 429 재시도 한 번
+      expect(busy).toHaveBeenCalledTimes(1 + MAIN_RETRY_WAITS_MS.length); // 첫 검색만 여러 번, 지표 검색은 안 함
+    });
+
+    it('지표 검색은 계속 막히면 최대 4번만 시도하고 주요 기사로 진행', async () => {
+      quiet();
+      const f = gdelt({ articles: [art('Stocks rise')] }, null);
+      f.mockImplementation(async (url: string) => {
+        const q = new URL(url).searchParams.get('query') ?? '';
+        return q.includes('payrolls') ? new Response('busy', { status: 429 }) : jsonRes({ articles: [art('Stocks rise')] });
+      });
+      const out = await fetchHeadlines(1, f as unknown as typeof fetch, noWait, { indicators: true });
+      expect(out.map((h) => h.title)).toEqual(['Stocks rise']);
+      expect(f).toHaveBeenCalledTimes(1 + 1 + INDICATOR_RETRY_WAITS_MS.length);
     });
   });
 });
