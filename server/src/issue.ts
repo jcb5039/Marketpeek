@@ -8,8 +8,10 @@ export interface Issue {
   text: string;
   /// 더 짧은 요약 (위젯 한 줄).
   shortText: string;
-  /// 요약을 만든 시각 (ISO 8601).
+  /// 요약을 만든 시각 (ISO 8601). 직전 요약을 유지하면 바뀌지 않는다.
   generatedAt: string;
+  /// 7시 작업이 마지막으로 돈 시각 (ISO 8601). 유지(kept)할 때도 바뀐다.
+  checkedAt?: string;
   /// 요약 대상 날짜, 한국 기준 어제 (YYYY-MM-DD).
   date: string;
   /// 예시 데이터면 true. 실제 요약이 생기면 false.

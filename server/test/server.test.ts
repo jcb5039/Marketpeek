@@ -4,7 +4,7 @@ import { fetchFx, kstDate } from '../src/eximbank';
 import worker, { collectYesterday, refresh, type Env } from '../src/index';
 import { sampleIssue } from '../src/issue';
 import { BACKFILL_PER_RUN, HISTORY_KEY, historyPoints, updateHistory } from '../src/fxHistory';
-import { fetchCoinMoves } from '../src/yesterday';
+import { fetchCoinMoves, rangePct } from '../src/yesterday';
 
 const jsonRes = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -178,6 +178,33 @@ describe('어제 이슈 재료', () => {
       { symbol: 'BTC', closeKrw: 89_949_000, changePct: 1.23 },
       { symbol: 'ETH', closeKrw: 3_990_000, changePct: -2 },
     ]);
+  });
+
+  it('24시간 변동폭 = (최고가 − 최저가) ÷ 24시간 전 가격, 최신순 봉', () => {
+    // 100 에서 시작해 97(−3%)까지 내렸다가 102(+2%)까지: 5%
+    expect(rangePct([
+      { opening_price: 101, high_price: 102, low_price: 100 },
+      { opening_price: 98, high_price: 101, low_price: 97 },
+      { opening_price: 100, high_price: 100, low_price: 98 },
+    ])).toBe(5);
+    expect(rangePct([{ opening_price: 100, high_price: 103, low_price: 99 }])).toBe(4);
+    expect(rangePct([])).toBeNull();
+    expect(rangePct([{ high_price: 1 }])).toBeNull();
+  });
+
+  it('비트코인은 1시간봉으로 변동폭을 붙이고, 1시간봉이 실패해도 등락률은 남긴다', async () => {
+    const withHours = vi.fn(async (url: string) => url.includes('candles/minutes/60')
+      ? jsonRes([{ opening_price: 100, high_price: 103, low_price: 99 }])
+      : upbit(url));
+    const out = await fetchCoinMoves(['BTC', 'ETH'], now, withHours as unknown as typeof fetch);
+    expect(out[0]).toEqual({ symbol: 'BTC', closeKrw: 89_949_000, changePct: 1.23, rangePct: 4 });
+    expect(out[1]).toEqual({ symbol: 'ETH', closeKrw: 3_990_000, changePct: -2 });
+    expect(withHours.mock.calls.filter(([u]) => String(u).includes('minutes/60'))).toHaveLength(1);
+
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const hoursFail = async (url: string) => url.includes('minutes/60') ? jsonRes({}, 429) : upbit(url);
+    const out2 = await fetchCoinMoves(['BTC'], now, hoursFail as unknown as typeof fetch);
+    expect(out2).toEqual([{ symbol: 'BTC', closeKrw: 89_949_000, changePct: 1.23 }]);
   });
 
   it('어제 봉이 응답에 없으면 그 코인은 뺀다', async () => {

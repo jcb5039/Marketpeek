@@ -45,7 +45,7 @@ export interface IssuePlan {
   fallbackLabel: string;
   /// 경제지표 예상치 대비 '놀라움'을 볼지. 미국 월요일 장과 휴장일·주말은 false.
   checkSurprise: boolean;
-  /// 코인 큰 움직임(예: 비트코인 ±5%)을 따로 볼지. 휴장일·주말만 true.
+  /// 코인 큰 움직임(비트코인 24시간 변동폭 4% 이상, issueAi.ts BIG_CRYPTO_MOVE_PCT)을 따로 볼지. 휴장일·주말만 true.
   watchCryptoMove: boolean;
   /// 이 연도의 휴장일 목록이 있는지. false 면 US_MARKET_HOLIDAYS 를 채워야 한다.
   holidaysKnown: boolean;
