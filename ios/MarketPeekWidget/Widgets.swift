@@ -433,7 +433,8 @@ struct HomeCard: View {
         // 환율 2×2 한 종목: 차트·이슈 줄 없이 이름·환율 / 기준·등락률 / 최근 업데이트 (시각은 아래로).
         let fxSmall = family == .systemSmall && layout == .single && (shown.first?.isFx ?? false)
         VStack(alignment: .leading, spacing: 0) {
-            header(layout == .list ? (listTitle ?? title) : title, showTime: !fxSmall)
+            header(layout == .list ? (listTitle ?? title) : title, showTime: !fxSmall, showRefresh: !fxSmall,
+                   showTitle: !fxSmall)
             Group {
                 if fxSmall, let item = shown.first {
                     fxSingleSmall(item)
@@ -464,14 +465,17 @@ struct HomeCard: View {
 
     // MARK: 제목 줄: 제목 ······ 15:35 ↻ ›
 
-    private func header(_ text: String, showTime: Bool = true) -> some View {
+    private func header(_ text: String, showTime: Bool = true, showRefresh: Bool = true,
+                        showTitle: Bool = true) -> some View {
         HStack(spacing: 4) {
-            Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            if showTitle {
+                Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            }
             Spacer(minLength: 4)
             if showTime, snapshot.settings.showUpdatedAt, let t = snapshot.updatedAt {
                 Text(Fmt.hm(t)).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
             }
-            RefreshButton()
+            if showRefresh { RefreshButton() }
             if let next { PageButtons(pagingId: next) }
         }
         .widgetAccentable()
@@ -513,7 +517,8 @@ struct HomeCard: View {
         Text(s).font(.system(size: size, weight: .bold)).monospacedDigit().minimumScaleFactor(0.5)
     }
 
-    /// 환율 2×2 한 종목: (가운데) 🇺🇸 USD / 1,333.7 ··· ▲0.10% / 최근 업데이트: 15:35
+    /// 환율 2×2 한 종목: (가운데) 🇺🇸 USD / 1,333.7 ··· ▲0.10% / 최근 업데이트: 15:35 ··· ↻
+    /// 새로고침은 코인·주식 2×2(SmallHomeCard)와 같이 맨 아래 오른쪽(2026-11-23).
     private func fxSingleSmall(_ item: HomeItem) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Spacer(minLength: 0)
@@ -533,10 +538,19 @@ struct HomeCard: View {
                     .fixedSize()
             }
             Spacer(minLength: 0)
-            if snapshot.settings.showUpdatedAt {
-                Text("최근 업데이트: \(snapshot.updatedAt.map(Fmt.hm) ?? "—")")
+            HStack(spacing: 4) {
+                if snapshot.settings.showUpdatedAt {
+                    let t = snapshot.updatedAt.map(Fmt.hm) ?? "—"
+                    ViewThatFits(in: .horizontal) {
+                        Text("최근 업데이트: \(t)")
+                        Text(t)
+                    }
                     .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                RefreshButton()
             }
+            .widgetAccentable()
         }
     }
 
