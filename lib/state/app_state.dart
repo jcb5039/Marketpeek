@@ -103,7 +103,7 @@ class AppState extends ChangeNotifier {
     await refresh();
     // 8시간이 지나 iOS가 끝냈으면 앱을 열 때 다시 띄운다.
     if (liveActivityOn && !await _live.isActive()) {
-      await _live.start(_liveRows(), colorScheme.name);
+      await _live.start(_liveRows(), colorScheme.name, issue: _liveIssue());
     }
     _syncLiveTimer();
   }
@@ -115,7 +115,7 @@ class AppState extends ChangeNotifier {
     if (_prefs == null) return; // 아직 load 전
     await refresh();
     if (liveActivityOn && !await _live.isActive()) {
-      await _live.start(_liveRows(), colorScheme.name);
+      await _live.start(_liveRows(), colorScheme.name, issue: _liveIssue());
     }
   }
 
@@ -123,7 +123,7 @@ class AppState extends ChangeNotifier {
   /// 켜기에 성공하면 true. 아이폰 설정에서 실시간 현황을 껐으면 false.
   Future<bool> setLiveActivity(bool on) async {
     if (on) {
-      liveActivityOn = await _live.start(_liveRows(), colorScheme.name);
+      liveActivityOn = await _live.start(_liveRows(), colorScheme.name, issue: _liveIssue());
     } else {
       await _live.end();
       liveActivityOn = false;
@@ -139,9 +139,13 @@ class AppState extends ChangeNotifier {
     _liveTimer = liveActivityOn ? Timer.periodic(liveInterval, (_) => refresh(pushWidgets: false)) : null;
   }
 
-  /// 첫 코인 · 첫 미국주식 · USD.
+  /// AI 어제 이슈. 서버에 없으면(null) 라이브 액티비티는 뉴스 칸 없이 그린다.
+  MarketIssue? _liveIssue() => quotes?.issue;
+
+  /// 첫 코인 · 첫 미국주식 · USD. 미국주식은 원화 환산(항상 USD/KRW)을 [LiveRow.sub]로 붙인다.
   List<LiveRow> _liveRows() {
     final q = quotes;
+    final usdRate = q?.fx['USD']?.rateKrw;
     return [
       if (coinSymbols.isNotEmpty)
         () {
@@ -155,7 +159,11 @@ class AppState extends ChangeNotifier {
           final t = stockTickers.first;
           final st = q?.stocks[t];
           return LiveRow(
-              id: 'stock:$t', symbol: t, price: st == null ? '—' : formatUsd(st.priceUsd), change: st?.changePct);
+              id: 'stock:$t',
+              symbol: t,
+              price: st == null ? '—' : formatUsd(st.priceUsd),
+              sub: st == null || usdRate == null ? null : formatKrwShort(st.priceUsd * usdRate),
+              change: st?.changePct);
         }(),
       () {
         final usd = q?.fx['USD'];
@@ -219,7 +227,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
     if (pushWidgets) await _pushWidgets();
-    if (liveActivityOn) await _live.update(_liveRows(), colorScheme.name);
+    if (liveActivityOn) await _live.update(_liveRows(), colorScheme.name, issue: _liveIssue());
   }
 
   /// 이번에 못 받은 종목(일시적 실패)은 "—" 대신 직전 값을 유지한다.

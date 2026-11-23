@@ -32,6 +32,8 @@ struct MarketActivityAttributes: ActivityAttributes {
     var id: String
     var symbol: String
     var price: String
+    /// 가격 옆 보조 값 (미국주식 원화 환산). 없으면 nil.
+    var sub: String?
     var change: Double?
   }
 
@@ -40,6 +42,10 @@ struct MarketActivityAttributes: ActivityAttributes {
     /// "korean" | "global" (상승·하락 색)
     var scheme: String
     var updatedAt: Date
+    /// AI 어제 이슈 (없으면 뉴스 칸 없이 그린다).
+    var issueText: String?
+    var issueShort: String?
+    var issueAt: Date?
   }
 }
 
@@ -106,15 +112,20 @@ enum LiveActivityController {
 
   private static func state(_ args: Any?) -> MarketActivityAttributes.ContentState? {
     guard let m = args as? [String: Any], let rows = m["rows"] as? [[String: Any]] else { return nil }
+    let issue = m["issue"] as? [String: Any]
     return MarketActivityAttributes.ContentState(
       rows: rows.map { r in
         MarketActivityAttributes.Row(
           id: r["id"] as? String ?? "",
           symbol: r["symbol"] as? String ?? "",
           price: r["price"] as? String ?? "—",
+          sub: r["sub"] as? String,
           change: (r["change"] as? NSNumber)?.doubleValue)
       },
       scheme: m["scheme"] as? String ?? "korean",
-      updatedAt: Date())
+      updatedAt: Date(),
+      issueText: issue?["text"] as? String,
+      issueShort: issue?["shortText"] as? String,
+      issueAt: (issue?["generatedAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) })
   }
 }
