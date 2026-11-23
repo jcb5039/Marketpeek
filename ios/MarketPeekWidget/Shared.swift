@@ -594,6 +594,10 @@ struct WidgetHeader: View {
     let now: Date
     /// 다음 버튼(>) 이름표. nil이면 버튼 없음.
     var next: String? = nil
+    /// false면 갱신 시각을 빼고 버튼만 (2×2 한 종목은 시각을 맨 아래에 따로 쓴다).
+    var showTime = true
+    /// false면 새로고침 버튼을 뺀다 (2×2 한 종목은 맨 아래 오른쪽에 따로 둔다).
+    var showRefresh = true
     @Environment(\.widgetFamily) private var family
 
     private var isHome: Bool { WidgetPaging.isHome(family) }
@@ -604,13 +608,13 @@ struct WidgetHeader: View {
                 Text(title).font(.caption2.weight(.semibold))
             }
             Spacer(minLength: 0)
-            if snapshot.settings.showUpdatedAt, let t = snapshot.updatedAt {
+            if showTime, snapshot.settings.showUpdatedAt, let t = snapshot.updatedAt {
                 Text(isHome ? "최근 업데이트: \(Fmt.hm(t))" : Fmt.ago(t, now: now))
                     .font(.caption2).foregroundStyle(.secondary)
             }
             // 잠금화면 위젯은 누르면 앱이 열리므로 홈 화면에만 단다.
             if isHome {
-                RefreshButton()
+                if showRefresh { RefreshButton() }
                 if let next { PageButtons(pagingId: next) }
             }
         }
@@ -717,7 +721,8 @@ struct ChangeOnlyRows: View {
     }
 }
 
-/// 홈 화면 2×2: 제목·갱신 시각 / 심볼 크게 + 이름 / 가격 크게 (+보조 가격) / 등락률.
+/// 홈 화면 2×2: ‹ › / 심볼 크게 + 이름 / 가격 크게 (+보조 가격) / 등락률 / 최근 업데이트 ··· ↻.
+/// 윗줄에 시각까지 넣으면 2×2 폭에서 "최근..."으로 잘려서 시각과 새로고침은 맨 아래 줄에 둔다(2026-11-23).
 /// 가격은 [prices]를 넓은 표기부터 시도해 한 줄에 들어가는 첫 번째를 쓴다.
 struct SmallHomeCard: View {
     let title: String
@@ -737,8 +742,17 @@ struct SmallHomeCard: View {
     var next: String? = nil
 
     var body: some View {
+        // 세로가 모자라면 종목 이름(테슬라 등)을 먼저 빼서 맨 아래 시각이 잘리지 않게 한다.
+        ViewThatFits(in: .vertical) {
+            card(showName: true)
+            card(showName: false)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func card(showName: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            WidgetHeader(title: title, snapshot: snapshot, now: now, next: next)
+            WidgetHeader(title: title, snapshot: snapshot, now: now, next: next, showTime: false, showRefresh: false)
             Spacer(minLength: 4)
             HStack(alignment: .center, spacing: 6) {
                 if let icon {
@@ -748,7 +762,7 @@ struct SmallHomeCard: View {
                     Text(symbol)
                         .font(.system(size: 22, weight: .bold))
                         .minimumScaleFactor(0.6)
-                    if let name {
+                    if showName, let name {
                         Text(name).font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -774,9 +788,25 @@ struct SmallHomeCard: View {
                 .font(.system(size: 15, weight: .semibold))
                 .monospacedDigit()
                 .padding(.top, 1)
+            HStack(spacing: 4) {
+                if snapshot.settings.showUpdatedAt {
+                    let t = snapshot.updatedAt.map(Fmt.hm) ?? "—"
+                    // 폭이 모자라면 시각만.
+                    ViewThatFits(in: .horizontal) {
+                        Text("최근 업데이트: \(t)")
+                        Text(t)
+                    }
+                    .font(.system(size: 10))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                RefreshButton()
+            }
+            .padding(.top, 3)
+            .widgetAccentable()
         }
         .lineLimit(1)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func priceText(_ s: String) -> some View {
