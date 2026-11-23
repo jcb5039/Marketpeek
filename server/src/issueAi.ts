@@ -11,8 +11,10 @@ import type { YesterdayData } from './yesterday';
 /// 600 토큰으로는 답(content)이 비어 뒤로 뺐다. wrangler.toml 의 ISSUE_MODEL 로 맨 앞 모델을 바꿀 수 있다.
 export const ISSUE_MODELS = ['@cf/google/gemma-4-26b-a4b-it', '@cf/zai-org/glm-4.7-flash'];
 
-/// 비트코인이 이만큼(%) 넘게 움직이면 휴장일·주말에도 이슈로 본다.
-export const BIG_CRYPTO_MOVE_PCT = 5;
+/// 비트코인 최근 24시간 변동폭(최고가 − 최저가)이 이만큼(%) 이상이면 휴장일·주말에도 이슈로 본다.
+/// 등락률이 아니라 변동폭이다(−3% → +2% 면 5%). 최근 200일 업비트 기준 주말 변동폭 중간값 1.5%,
+/// 4% 이상은 주말의 약 10%(한 달에 한 번꼴)라 4로 정했다(2026-11-23).
+export const BIG_CRYPTO_MOVE_PCT = 4;
 
 export interface IssueItem {
   /// 앱 화면용 한 문장.
@@ -52,7 +54,10 @@ export function marketLines(data: YesterdayData): { line: string; size: number }
   const out: { line: string; size: number }[] = [];
   for (const m of data.markets) out.push({ line: moveLine(m), size: moveSize(m) });
   const btc = data.coins.find((c) => c.symbol === 'BTC');
-  if (btc) out.push({ line: `비트코인 ${fmtPct(btc.changePct)} (업비트, 한국 시간 기준 하루)`, size: Math.abs(btc.changePct) });
+  if (btc) {
+    const range = btc.rangePct != null ? ` · 최근 24시간 변동폭 ${btc.rangePct.toFixed(2)}%` : '';
+    out.push({ line: `비트코인 ${fmtPct(btc.changePct)} (업비트, 한국 시간 기준 하루${range})`, size: Math.abs(btc.changePct) });
+  }
   const usd = data.fx.USD;
   if (usd) out.push({ line: `원/달러 환율 ${usd.rateKrw}원 ${fmtPct(usd.changePct)}`, size: Math.abs(usd.changePct) });
   return out.sort((a, b) => b.size - a.size);
@@ -72,9 +77,16 @@ function moveSize(m: MarketMove): number {
   return m.id === 'VIX' ? Math.abs(m.changePct) / 5 : Math.abs(m.changePct);
 }
 
-export function isBigCryptoMove(data: YesterdayData): boolean {
+/// 비트코인 24시간 변동폭. 변동폭을 못 받았으면 등락률 크기로 대신한다. 비트코인이 없으면 null.
+export function cryptoSwing(data: YesterdayData): number | null {
   const btc = data.coins.find((c) => c.symbol === 'BTC');
-  return !!btc && Math.abs(btc.changePct) >= BIG_CRYPTO_MOVE_PCT;
+  if (!btc) return null;
+  return btc.rangePct ?? Math.abs(btc.changePct);
+}
+
+export function isBigCryptoMove(data: YesterdayData): boolean {
+  const swing = cryptoSwing(data);
+  return swing != null && swing >= BIG_CRYPTO_MOVE_PCT;
 }
 
 const SYSTEM = `너는 장기 투자자를 위한 시장 요약 도우미다. 어제 시장이 "왜 움직였는지"를 한국어로 짧게 쓴다.
@@ -100,9 +112,15 @@ export function buildMessages(plan: IssuePlan, data: YesterdayData, headlines: H
   } else {
     const why = plan.mode === 'weekend' ? '주말' : `${plan.label}(미국장 휴장)`;
     day.push(`대상: ${why}. 미국 주식시장은 쉬었다.`);
-    day.push(`깜짝 발표·전쟁·정책 같은 큰 일이나 비트코인 ±${BIG_CRYPTO_MOVE_PCT}% 이상 움직임이 있을 때만 요약한다.`);
-    day.push(isBigCryptoMove(data) ? '비트코인이 크게 움직였다.' : '비트코인은 크게 움직이지 않았다.');
-    day.push('그런 일이 없으면 {"keep":true} 만 출력한다.');
+    if (isBigCryptoMove(data)) {
+      // 큰 움직임이면 유지를 허용하지 않는다(issueJob 도 keep 을 받지 않음).
+      day.push(`비트코인이 최근 24시간 동안 ${cryptoSwing(data)!.toFixed(2)}% 범위로 크게 오르내렸다(최고가와 최저가 차이).`);
+      day.push('이 움직임과 그 이유를 1위로 요약한다. 다른 큰 일이 있으면 함께 쓴다.');
+    } else {
+      day.push(`깜짝 발표·전쟁·정책 같은 큰 일이나 비트코인 24시간 변동폭(최고가와 최저가 차이) ${BIG_CRYPTO_MOVE_PCT}% 이상일 때만 요약한다.`);
+      day.push('비트코인은 크게 움직이지 않았다.');
+      day.push('그런 일이 없으면 {"keep":true} 만 출력한다.');
+    }
   }
   const user = `${day.join(' ')}\n\n시장 숫자(크게 움직인 순):\n${lines}\n\n뉴스 제목(영어, 출처 GDELT):\n${news}`;
   return [

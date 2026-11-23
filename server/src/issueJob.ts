@@ -4,7 +4,7 @@
 import type { Env } from './index';
 import { collectYesterday } from './index';
 import type { Issue } from './issue';
-import { ISSUE_MODELS, aiText, buildMessages, numbersOnly, parseAiAnswer, type AiIssue } from './issueAi';
+import { ISSUE_MODELS, aiText, buildMessages, isBigCryptoMove, numbersOnly, parseAiAnswer, type AiIssue } from './issueAi';
 import { planIssue } from './issueSchedule';
 import { GDELT_CREDIT, fetchHeadlines, type Headline } from './news';
 
@@ -39,7 +39,8 @@ export async function runIssueJob(env: Env, now: Date, deps: IssueJobDeps = {}):
     fetchHeadlines(plan.mode === 'weekend' ? 2 : 1, fetchFn, deps.wait, { indicators: plan.checkSurprise }),
     env.QUOTES.get<Issue>(ISSUE_KEY, 'json'),
   ]);
-  const allowKeep = plan.mode !== 'session';
+  // 장이 열린 날과 코인이 크게 오르내린 날은 직전 요약을 유지하지 않는다.
+  const allowKeep = plan.mode !== 'session' && !isBigCryptoMove(data);
 
   let result: AiIssue | null = null;
   let basis: Issue['basis'] = 'numbers';
@@ -49,7 +50,8 @@ export async function runIssueJob(env: Env, now: Date, deps: IssueJobDeps = {}):
       const { answer, reason } = parseAiAnswer(aiText(out), allowKeep);
       if (answer?.keep) {
         if (prev && !prev.sample) {
-          const kept: Issue = { ...prev, label: plan.fallbackLabel, basis: 'kept' };
+          // 유지해도 확인 시각은 남겨서 오늘 작업이 돌았는지 알 수 있게 한다.
+          const kept: Issue = { ...prev, label: plan.fallbackLabel, basis: 'kept', checkedAt: now.toISOString() };
           await env.QUOTES.put(ISSUE_KEY, JSON.stringify(kept));
           return kept;
         }
@@ -75,6 +77,7 @@ export async function runIssueJob(env: Env, now: Date, deps: IssueJobDeps = {}):
     text: result.items[0].text,
     shortText: result.headline,
     generatedAt: now.toISOString(),
+    checkedAt: now.toISOString(),
     date: plan.lastSessionDate,
     sample: false,
     label: plan.mode === 'session' || basis !== 'numbers' ? plan.label : plan.fallbackLabel,

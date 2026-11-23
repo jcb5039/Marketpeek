@@ -182,9 +182,22 @@ describe('시장 숫자 줄', () => {
     expect(lines).toContain('원/달러 환율 1430.5원 +0.40%');
   });
 
-  it('비트코인 ±5% 이상이면 큰 움직임', () => {
+  it('비트코인 24시간 변동폭 4% 이상이면 큰 움직임(지금 등락률과 상관없이)', () => {
+    const btc = (changePct: number, rangePct?: number) => ({ ...data, coins: [{ symbol: 'BTC', closeKrw: 1, changePct, rangePct }] });
     expect(isBigCryptoMove(data)).toBe(false);
-    expect(isBigCryptoMove({ ...data, coins: [{ symbol: 'BTC', closeKrw: 1, changePct: -6.1 }] })).toBe(true);
+    // −3% → +2%: 변동폭 5%, 지금은 +2%
+    expect(isBigCryptoMove(btc(2, 5))).toBe(true);
+    expect(isBigCryptoMove(btc(1.81, 4))).toBe(true);
+    expect(isBigCryptoMove(btc(-3.9, 3.99))).toBe(false);
+    // 변동폭을 못 받았으면 등락률 크기로
+    expect(isBigCryptoMove(btc(-4.2))).toBe(true);
+    expect(isBigCryptoMove(btc(-3.5))).toBe(false);
+  });
+
+  it('변동폭이 있으면 비트코인 줄에 함께 쓰고, 숫자 대비 문장에서는 뺀다', () => {
+    const d = { ...data, markets: [], coins: [{ symbol: 'BTC', closeKrw: 1, changePct: 1.81, rangePct: 9.58 }] };
+    expect(marketLines(d)[0].line).toBe('비트코인 +1.81% (업비트, 한국 시간 기준 하루 · 최근 24시간 변동폭 9.58%)');
+    expect(numbersOnly(d)?.items[0].text).toBe('비트코인 +1.81%');
   });
 });
 
@@ -361,7 +374,38 @@ describe('하루 작업(runIssueJob)', () => {
     const issue = await runIssueJob(e, new Date('2026-11-22T07:00:00+09:00'), {
       fetchFn: routes([]) as unknown as typeof fetch, ai: aiReturning('{"keep":true}'),
     });
-    expect(issue).toMatchObject({ shortText: '금요일 이슈', label: '11/20 금 미국장 기준', basis: 'kept' });
+    expect(issue).toMatchObject({
+      shortText: '금요일 이슈', label: '11/20 금 미국장 기준', basis: 'kept',
+      generatedAt: '2026-11-21T22:00:00Z', checkedAt: new Date('2026-11-22T07:00:00+09:00').toISOString(),
+    });
+  });
+
+  it('주말에 비트코인 변동폭이 4% 이상이면 keep 을 받지 않고 새로 만든다(확인 시각 저장)', async () => {
+    quiet();
+    const e = env();
+    e.kv.store.set(ISSUE_KEY, JSON.stringify({
+      text: 't', shortText: '금요일 이슈', generatedAt: '2026-11-20T22:00:00Z', date: '2026-11-20', sample: false,
+      label: '11/20 금 미국장', basis: 'news',
+    }));
+    const base = routes([]);
+    // 24시간 동안 100 → 최저 97 → 최고 102 (변동폭 5%)
+    const fetchFn = vi.fn(async (url: string) => url.includes('candles/minutes/60')
+      ? jsonRes([
+        { opening_price: 101, high_price: 102, low_price: 100 },
+        { opening_price: 98, high_price: 101, low_price: 97 },
+        { opening_price: 100, high_price: 100, low_price: 98 },
+      ])
+      : url.includes('candles/days')
+        ? jsonRes([{ candle_date_time_kst: '2026-11-21T09:00:00', trade_price: 82_600_000, change_rate: 0.0181 }])
+        : base(url));
+    const sun7 = new Date('2026-11-22T07:00:00+09:00');
+    const ai = aiReturning('{"keep":true}');
+    const issue = await runIssueJob(e, sun7, { fetchFn: fetchFn as unknown as typeof fetch, ai });
+    expect(issue?.basis).toBe('numbers');
+    expect(issue?.checkedAt).toBe(sun7.toISOString());
+    const prompt = ai.run.mock.calls[0][1].messages[1].content as string;
+    expect(prompt).toContain('5.00% 범위로 크게 오르내렸다');
+    expect(prompt).not.toContain('keep');
   });
 
   it('장이 열린 날 keep 이면 받아들이지 않고 숫자만', async () => {
