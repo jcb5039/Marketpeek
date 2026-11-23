@@ -1113,6 +1113,8 @@ struct MarketActivityAttributes: ActivityAttributes {
         var id: String
         var symbol: String
         var price: String
+        /// 가격 옆 보조 값 (미국주식 원화 환산). 없으면 nil.
+        var sub: String?
         var change: Double?
     }
 
@@ -1121,23 +1123,35 @@ struct MarketActivityAttributes: ActivityAttributes {
         /// "korean" | "global" (상승·하락 색)
         var scheme: String
         var updatedAt: Date
+        /// AI 어제 이슈 (없으면 뉴스 칸 없이 그린다).
+        var issueText: String?
+        var issueShort: String?
+        var issueAt: Date?
     }
 }
 
 struct MarketLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: MarketActivityAttributes.self) { context in
+            // 시안(2026-11-23): 흰 카드. 시안 높이 약 222pt 를 iOS 최대(약 160pt)에 맞춰 0.72배로 줄였다.
             LiveLockView(state: context.state, stale: context.isStale)
-                .padding(16)
-                .environment(\.colorScheme, .dark)
-                .activityBackgroundTint(Color.black.opacity(0.75))
-                .activitySystemActionForegroundColor(.white)
+                .padding(.horizontal, 18 * LiveLockView.k)
+                .padding(.top, 17 * LiveLockView.k)
+                .padding(.bottom, 12 * LiveLockView.k)
+                .environment(\.colorScheme, .light)
+                .activityBackgroundTint(Color.white.opacity(0.96))
+                .activitySystemActionForegroundColor(.black)
         } dynamicIsland: { context in
             let s = context.state
             let first = s.rows.first
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.bottom) {
-                    LiveRows(state: s)
+                    VStack(alignment: .leading, spacing: 6) {
+                        LiveRows(state: s)
+                        if let short = s.issueShort ?? s.issueText, !short.isEmpty {
+                            Text("✦ \(short)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
                 }
             } compactLeading: {
                 Text(first?.symbol ?? "—").font(.caption2.weight(.bold))
@@ -1151,28 +1165,143 @@ struct MarketLiveActivity: Widget {
     }
 }
 
-/// 잠금화면: 3종목 가로 + 맨 아래 갱신 시각.
+/// 잠금화면 (시안 2026-11-23): 종목 칸 / 뉴스(AI 요약) 칸 / 구분선 / MarketPeek ··· 마지막 갱신.
+/// 시안의 크기·간격을 [k]배로 줄여 iOS 최대 높이(약 160pt) 안에 넣는다.
+/// - 2~3칸: 칸을 가로로 나눠 아이콘·이름·등락률 / 가격. 2칸 이하면 주식 원화 환산도 가격 옆에.
+/// - 1칸(환율만): 한 줄 가로 배치, 남는 높이만큼 요약을 3줄까지.
+/// - 요약이 없으면 뉴스 칸을 빼고 종목 칸과 아래 줄만.
 struct LiveLockView: View {
     let state: MarketActivityAttributes.ContentState
     let stale: Bool
 
+    /// 시안 → 실제 크기 비율 (222pt → 160pt).
+    static let k: CGFloat = 0.72
+    private var k: CGFloat { Self.k }
+
+    private var issueText: String? {
+        let t = state.issueText?.isEmpty == false ? state.issueText : state.issueShort
+        return t?.isEmpty == false ? t : nil
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LiveRows(state: state)
-            HStack {
-                Spacer(minLength: 0)
-                Text("최근 업데이트: \(Self.hms(state.updatedAt))" + (stale ? " · 앱을 열면 갱신돼요" : ""))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            if state.rows.count == 1, let r = state.rows.first {
+                singleRow(r)
+            } else {
+                columns
+            }
+            if let issueText {
+                newsBox(issueText)
+                    .padding(.top, 10 * k)
+            }
+            Color.black.opacity(0.08).frame(height: 1)
+                .padding(.top, 11 * k)
+            footer
+                .padding(.top, 8 * k)
+        }
+    }
+
+    // MARK: 종목 칸
+
+    private var columns: some View {
+        HStack(alignment: .top, spacing: 10 * k) {
+            ForEach(Array(state.rows.enumerated()), id: \.offset) { _, r in
+                VStack(alignment: .leading, spacing: 0) {
+                    // 이름 바로 오른쪽에 등락률 (₿ BTC ▲+2.00%).
+                    HStack(spacing: 5 * k) {
+                        ItemIcon(kind: LiveRows.icon(r), size: 16 * k)
+                        Text(r.symbol).font(.system(size: 13 * k, weight: .bold))
+                            .minimumScaleFactor(0.7)
+                        change(r.change)
+                            .minimumScaleFactor(0.7)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 3 * k) {
+                        Text(r.price).font(.system(size: 20 * k, weight: .bold)).monospacedDigit()
+                            .minimumScaleFactor(0.6)
+                        if state.rows.count <= 2, let sub = r.sub {
+                            Text(sub).font(.system(size: 13 * k)).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                    }
+                    .padding(.top, 4 * k)
+                }
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
-    static func hms(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "HH:mm:ss"
-        return f.string(from: date)
+    private func singleRow(_ r: MarketActivityAttributes.Row) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8 * k) {
+            HStack(spacing: 5 * k) {
+                ItemIcon(kind: LiveRows.icon(r), size: 16 * k)
+                Text(r.symbol).font(.system(size: 13 * k, weight: .bold))
+            }
+            Text(r.price).font(.system(size: 20 * k, weight: .bold)).monospacedDigit()
+                .minimumScaleFactor(0.6)
+            if let sub = r.sub {
+                Text(sub).font(.system(size: 13 * k)).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Spacer(minLength: 0)
+            change(r.change)
+        }
+        .lineLimit(1)
+    }
+
+    private func change(_ pct: Double?) -> some View {
+        ChangeText(pct: pct, scheme: state.scheme)
+            .font(.system(size: 13 * k, weight: .semibold)).monospacedDigit()
+    }
+
+    // MARK: 뉴스 칸
+
+    private func newsBox(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 6 * k) {
+            HStack(spacing: 4 * k) {
+                Image(systemName: "newspaper")
+                Text("뉴스").fontWeight(.semibold)
+                Spacer(minLength: 4 * k)
+                Group {
+                    if let at = state.issueAt {
+                        Text("✦ AI 요약 · \(Fmt.ago(at, now: state.updatedAt))")
+                    } else {
+                        Text("✦ AI 요약")
+                    }
+                }
+                .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11 * k))
+            .foregroundStyle(Color(red: 0.85, green: 0.33, blue: 0.10))
+            .lineLimit(1)
+            // 환율만 있으면 종목 칸이 한 줄이라 요약을 3줄까지.
+            Text(text)
+                .font(.system(size: 14 * k, weight: .medium))
+                .lineLimit(state.rows.count <= 1 ? 3 : 2)
+                .minimumScaleFactor(0.9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12 * k)
+        .padding(.top, 10 * k)
+        .padding(.bottom, 8 * k)
+        .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 14 * k, style: .continuous))
+    }
+
+    // MARK: 아래 줄
+
+    private var footer: some View {
+        HStack(spacing: 5 * k) {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .font(.system(size: 8 * k, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 14 * k, height: 14 * k)
+                .background(Color(red: 0.98, green: 0.55, blue: 0.25),
+                            in: RoundedRectangle(cornerRadius: 3.5 * k, style: .continuous))
+            Text("MarketPeek")
+            Spacer(minLength: 4 * k)
+            Text("마지막 갱신 \(Fmt.hm(state.updatedAt))" + (stale ? " · 앱을 열면 갱신돼요" : ""))
+        }
+        .font(.system(size: 12 * k))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
     }
 }
 
