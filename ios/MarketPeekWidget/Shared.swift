@@ -471,6 +471,14 @@ enum Fmt {
         return f.string(from: date)
     }
 
+    /// "11/25 수" 처럼 월/일 요일.
+    static func mdw(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.dateFormat = "M/d E"
+        return f.string(from: date)
+    }
+
     /// 마지막 갱신이 [now] 기준 얼마 전인지: "방금", "12분 전", "3시간 전", "2일 전".
     /// 엔트리 시각을 [now]로 넘기므로 위젯이 시세를 다시 받지 않아도 엔트리마다 늘어난다.
     static func ago(_ date: Date, now: Date) -> String {
