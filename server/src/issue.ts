@@ -25,6 +25,16 @@ export interface Issue {
   /// 뉴스를 썼으면 출처 표시(GDELT 약관상 필수)와 근거 기사 몇 개.
   credit?: { name: string; url: string };
   sources?: { title: string; url: string; domain: string }[];
+  /// 그 전 날 만든 요약. AI 에게 "이미 알린 일"로 알려 같은 이야기를 다시 1위로 쓰지 않게 한다.
+  /// 같은 날 다시 만들어도 덮어쓰지 않고 이어 간다(2026-11-25: 화요일 하락장에 월요일 엔비디아 급등 기사로 "반등" 요약).
+  prior?: PriorIssue;
+}
+
+export interface PriorIssue {
+  date: string;
+  label?: string;
+  text: string;
+  shortText: string;
 }
 
 export function sampleIssue(now: Date): Issue {

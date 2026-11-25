@@ -264,6 +264,25 @@ struct IssueWidget: Widget {
     }
 }
 
+/// 어제 이슈 문장을 주어진 높이 안에서 잘리지 않게: 긴 요약(text) → 짧은 요약(short) → 첫 구절 순으로
+/// 다 들어가는 첫 문장을 보여 준다. 첫 구절도 안 들어가면 그것을 잘라서 보여 준다.
+/// 높이는 바깥에서 frame(maxHeight:) 로 정한다.
+struct IssueFitText: View {
+    let issue: Snapshot.Issue
+    let font: Font
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            // fixedSize: 줄 수 제한 없이 필요한 높이를 그대로 요구해야 '다 들어가는지'를 판단할 수 있다.
+            Text(issue.text).font(font).fixedSize(horizontal: false, vertical: true)
+            if let short = issue.short, short != issue.text {
+                Text(short).font(font).fixedSize(horizontal: false, vertical: true)
+            }
+            Text(issue.firstClause).font(font).minimumScaleFactor(0.8)
+        }
+    }
+}
+
 struct IssueWidgetView: View {
     let entry: SnapshotEntry
     @Environment(\.widgetFamily) private var family
@@ -281,11 +300,9 @@ struct IssueWidgetView: View {
             case .systemSmall:
                 VStack(alignment: .leading, spacing: 6) {
                     Text("✦ 어제 이슈 · AI").font(.caption2.weight(.semibold))
-                    Text(issue.text)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(4)
-                        .minimumScaleFactor(0.8)
-                    Spacer(minLength: 0)
+                    // 남은 높이에 다 들어가는 문장(긴 요약 → 짧은 요약 → 첫 구절)을 고른다.
+                    IssueFitText(issue: issue, font: .subheadline.weight(.semibold))
+                        .frame(maxHeight: .infinity, alignment: .topLeading)
                     Text("\(Fmt.hm(issue.generatedAt)) 갱신").font(.caption2).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -489,10 +506,12 @@ struct HomeCard: View {
             if family != .systemSmall {
                 Text("✦ 어제 이슈 · AI").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
             }
-            Text(issue.text)
-                .font(.system(size: family == .systemSmall ? 10 : 11, weight: .medium))
-                .lineLimit(family == .systemMedium ? 1 : 2)
-                .minimumScaleFactor(0.9)
+            // 최대 줄 수 높이 안에 다 들어가는 문장(긴 요약 → 짧은 요약 → 첫 구절)을 고른다.
+            let size: CGFloat = family == .systemSmall ? 10 : 11
+            let lines: CGFloat = family == .systemMedium ? 1 : 2
+            IssueFitText(issue: issue, font: .system(size: size, weight: .medium))
+                .frame(maxHeight: ceil(UIFont.systemFont(ofSize: size, weight: .medium).lineHeight * lines) + 1,
+                       alignment: .topLeading)
         }
     }
 

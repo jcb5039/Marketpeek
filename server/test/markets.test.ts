@@ -1,7 +1,7 @@
 // 전날 미국 시장 반응(FRED 지수, 미 재무부 10년물) 수집 테스트. 실제 외부 API는 부르지 않는다.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  fetchMarketMoves, fetchTreasury10y, parseFredObservations, parseTreasury10y, toMove,
+  fetchMarketMoves, fetchTreasury10y, parseFredObservations, parseTreasury10y, splitByDate, toMove,
 } from '../src/markets';
 
 const jsonRes = (body: unknown, status = 200) =>
@@ -126,5 +126,16 @@ describe('fetchMarketMoves', () => {
     const out = await fetchMarketMoves(undefined, now, route as unknown as typeof fetch);
     expect(out.map((m) => m.id)).toEqual(['US10Y']);
     expect(route.mock.calls.every(([u]) => String(u).includes('home.treasury.gov'))).toBe(true);
+  });
+});
+
+describe('splitByDate: 요약할 날짜와 다른 숫자 거르기', () => {
+  it('FRED 가 아직 안 올린 날(지난 값)은 stale 로', () => {
+    const sp = toMove('SP500', 'S&P500', [{ date: '2026-11-19', value: 7175.83 }, { date: '2026-11-20', value: 6910.39 }])!;
+    const nq = toMove('NASDAQ', '나스닥', [{ date: '2026-11-18', value: 24429.88 }, { date: '2026-11-19', value: 23879.2 }])!;
+    const y10 = toMove('US10Y', '미국 10년물 금리', [{ date: '2026-11-20', value: 4.1 }, { date: '2026-11-23', value: 4.05 }], true)!;
+    const { fresh, stale } = splitByDate([sp, nq, y10], '2026-11-23');
+    expect(fresh.map((m) => m.id)).toEqual(['US10Y']);
+    expect(stale.map((m) => m.id)).toEqual(['SP500', 'NASDAQ']);
   });
 });

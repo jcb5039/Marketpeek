@@ -3,7 +3,8 @@
 // - 미국 10년물: 미 재무부 Daily Par Yield Curve XML 피드(키 없음).
 // - S&P500·나스닥·VIX: FRED(미국 세인트루이스 연준) API, 무료 키 필요(FRED_API_KEY). 키가 없으면 건너뛴다.
 //   지수 시리즈는 제공사 저작권이 있어 비상업·교육용으로만 쓴다(출시 계획 없음, 형 11-20).
-// 각 출처에서 값이 있는 가장 최근 두 날을 비교한다. 날짜가 어제 미국장과 맞는지는 요약 단계에서 확인한다.
+// 각 출처에서 값이 있는 가장 최근 두 날을 비교한다. 날짜가 요약할 미국장과 맞는지는 issueJob 이 splitByDate 로 거른다.
+// (FRED 는 하루쯤 늦게 올라와 한국 7시에는 전날 종가가 아직 없는 날이 많다. 2026-11-24: 11/23 월 요약에 11/20 금 숫자가 들어감.)
 
 export interface MarketMove {
   /// 'SP500' | 'NASDAQ' | 'VIX' | 'US10Y'
@@ -48,6 +49,15 @@ export function toMove(id: string, name: string, points: Point[], isRate = false
     prevDate: prev.date, prevClose: prev.value,
     change: round2(last.value - prev.value),
     changePct: isRate || prev.value === 0 ? null : round2(((last.value - prev.value) / prev.value) * 100),
+  };
+}
+
+/// 요약할 미국장 날짜(day)의 숫자(fresh)와 그 밖의 날짜 숫자(stale)로 나눈다.
+/// stale 을 AI 에 주면 지난 장의 등락을 그날 일로 쓰므로 버린다.
+export function splitByDate(moves: MarketMove[], day: string): { fresh: MarketMove[]; stale: MarketMove[] } {
+  return {
+    fresh: moves.filter((m) => m.date === day),
+    stale: moves.filter((m) => m.date !== day),
   };
 }
 

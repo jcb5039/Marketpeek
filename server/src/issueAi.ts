@@ -1,6 +1,7 @@
 // AI 어제 이슈 3단계 ⓒ: AI 에게 줄 지시문, AI 답 검사, 숫자만 쓰는 대비 문장.
 // 형 기준(11-20): 시장 반응 → 놀라움 → 오래 가는 영향 순, 상위 3개, 1·2위가 비슷하면 한 줄에 함께,
 // 투자 권유 표현 금지, 원인 단정 금지("~ 영향으로 보임"). 형 피드백(11-19): 가격이 먼저, 원인이 불분명하면 숫자만.
+import type { PriorIssue } from './issue';
 import type { IssuePlan } from './issueSchedule';
 import type { MarketMove } from './markets';
 import type { Headline } from './news';
@@ -100,7 +101,7 @@ const SYSTEM = `너는 장기 투자자를 위한 시장 요약 도우미다. �
 7. JSON 만 출력한다: {"keep":false,"headline":"...","items":[{"text":"...","shortText":"..."}]}`;
 
 /// AI 에게 보낼 메시지. keep 을 허용하는 날(휴장·주말)에는 큰 일이 없으면 {"keep":true} 로 답하게 한다.
-export function buildMessages(plan: IssuePlan, data: YesterdayData, headlines: Headline[]) {
+export function buildMessages(plan: IssuePlan, data: YesterdayData, headlines: Headline[], prior?: PriorIssue) {
   const lines = marketLines(data).map((x) => `- ${x.line}`).join('\n') || '- (숫자 없음)';
   const news = headlines.length
     ? headlines.map((h) => `- ${h.title} (${h.domain})`).join('\n')
@@ -109,6 +110,10 @@ export function buildMessages(plan: IssuePlan, data: YesterdayData, headlines: H
   if (plan.mode === 'session') {
     day.push(`대상: ${plan.label}.`);
     if (!plan.checkSurprise) day.push('미국 월요일 장이라 ② 놀라움(경제지표)은 보지 않는다.');
+    // 지수 종가가 아직 안 올라온 날(issueJob 이 날짜 다른 숫자를 뺌): 뉴스의 장 마감 결과로 판단하게 한다.
+    if (!data.markets.some((m) => m.id === 'SP500' || m.id === 'NASDAQ')) {
+      day.push('미국 지수 종가(S&P500·나스닥)는 아직 받지 못했다. 뉴스 제목에 나온 장 마감 결과로 시장 반응을 판단하고, 장 시작 전 전망 기사는 결과로 쓰지 않는다.');
+    }
   } else {
     const why = plan.mode === 'weekend' ? '주말' : `${plan.label}(미국장 휴장)`;
     day.push(`대상: ${why}. 미국 주식시장은 쉬었다.`);
@@ -121,6 +126,12 @@ export function buildMessages(plan: IssuePlan, data: YesterdayData, headlines: H
       day.push('비트코인은 크게 움직이지 않았다.');
       day.push('그런 일이 없으면 {"keep":true} 만 출력한다.');
     }
+  }
+  if (prior) {
+    // 뉴스는 24시간을 넓게 받으므로(장 전 코인·큰 뉴스도 잡으려고) 전날 이야기를 다룬 기사가 많이 섞인다.
+    day.push(`직전 요약(${prior.label ?? prior.date}, 이미 알림): "${prior.text}".`
+      + ' 이 일을 다룬 기사가 많아도 지난 일이니 다시 1위로 쓰지 않고, 그 뒤 새로 생긴 움직임과 뉴스를 쓴다.'
+      + ' 단 같은 일이라도 새 전개(추가 급등락, 후속 발표, 반대 방향 움직임)가 있으면 그 새 전개를 쓴다.');
   }
   const user = `${day.join(' ')}\n\n시장 숫자(크게 움직인 순):\n${lines}\n\n뉴스 제목(영어, 출처 GDELT):\n${news}`;
   return [
