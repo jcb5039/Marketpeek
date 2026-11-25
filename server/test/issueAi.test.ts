@@ -5,7 +5,7 @@ import worker from '../src/index';
 import {
   aiText, buildMessages, findBanned, isBigCryptoMove, marketLines, numbersOnly, parseAiAnswer,
 } from '../src/issueAi';
-import { ISSUE_CRON, ISSUE_KEY, runIssueJob, type AiRunner } from '../src/issueJob';
+import { ISSUE_CRON, ISSUE_KEY, priorOf, runIssueJob, type AiRunner } from '../src/issueJob';
 import { planIssue } from '../src/issueSchedule';
 import {
   cleanTitle, fetchHeadlines, GDELT_GAP_MS, INDICATOR_LIMIT, INDICATOR_RETRY_WAITS_MS, MAIN_RETRY_WAITS_MS, parseGdelt,
@@ -210,6 +210,7 @@ describe('AI 지시문', () => {
     expect(msgs[1].content).toContain('나스닥 19800 -1.98%');
     expect(msgs[1].content).toContain('Nasdaq drops on Fed comments (reuters.com)');
     expect(msgs[1].content).not.toContain('keep');
+    expect(msgs[1].content).not.toContain('지수 종가(S&P500·나스닥)는 아직 받지 못했다');
   });
 
   it('미국 월요일 장은 놀라움을 보지 않는다고 알려 줌', () => {
@@ -222,6 +223,42 @@ describe('AI 지시문', () => {
     const user = buildMessages(plan, data, [])[1].content;
     expect(user).toContain('{"keep":true}');
     expect(user).toContain('받은 뉴스 없음');
+  });
+});
+
+describe('직전 요약(prior)', () => {
+  const tue = { text: '엔비디아 CEO 복귀에 증시 급등', shortText: '엔비디아 급등', date: '2026-11-23', label: '11/23 월 미국장', sample: false };
+  it('그 전 날 만든 요약이면 그것을 prior 로', () => {
+    expect(priorOf({ ...tue, generatedAt: '2026-11-23T22:00:00Z' }, '2026-11-25')).toEqual({
+      date: '2026-11-23', label: '11/23 월 미국장', text: '엔비디아 CEO 복귀에 증시 급등', shortText: '엔비디아 급등',
+    });
+  });
+  it('오늘 이미 만든 요약을 다시 만들 때는 그 요약이 이어 가던 prior', () => {
+    const prior = { date: '2026-11-23', text: 'a', shortText: 'b' };
+    expect(priorOf({ ...tue, generatedAt: '2026-11-24T22:00:00Z', prior }, '2026-11-25')).toBe(prior);
+    expect(priorOf({ ...tue, generatedAt: '2026-11-24T22:00:00Z' }, '2026-11-25')).toBeUndefined();
+  });
+  it('예시 문장이나 없으면 prior 없음', () => {
+    expect(priorOf(null, '2026-11-25')).toBeUndefined();
+    expect(priorOf({ ...tue, sample: true, generatedAt: '2026-11-01T00:00:00Z' }, '2026-11-25')).toBeUndefined();
+  });
+  it('AI 지시문에 이미 알린 일로 들어감', () => {
+    const plan = planIssue(new Date('2026-11-25T07:00:00+09:00'));
+    const user = buildMessages(plan, data, [], { date: '2026-11-23', label: '11/23 월 미국장', text: '엔비디아 급등', shortText: 'x' })[1].content;
+    expect(user).toContain('직전 요약(11/23 월 미국장, 이미 알림): "엔비디아 급등"');
+    expect(user).toContain('새 전개');
+    expect(buildMessages(plan, data, [])[1].content).not.toContain('직전 요약');
+  });
+  it('하루 작업: 저장된 전날 요약을 AI 에 주고 새 이슈에 prior 로 남김', async () => {
+    quiet();
+    const e = env();
+    e.kv.store.set(ISSUE_KEY, JSON.stringify({ ...tue, generatedAt: '2026-11-18T22:00:00Z' }));
+    const ai = aiReturning(good);
+    const issue = await runIssueJob(e, new Date('2026-11-20T07:00:00+09:00'), {
+      fetchFn: routes([]) as unknown as typeof fetch, wait: noWait, ai,
+    });
+    expect((ai.run.mock.calls[0][1].messages[1].content as string)).toContain('엔비디아 CEO 복귀에 증시 급등');
+    expect(issue?.prior?.text).toBe('엔비디아 CEO 복귀에 증시 급등');
   });
 });
 
@@ -408,6 +445,23 @@ describe('하루 작업(runIssueJob)', () => {
     expect(prompt).not.toContain('keep');
   });
 
+  it('요약할 날짜와 다른 지수 숫자(FRED 지연)는 AI 에 주지 않고, 뉴스의 장 마감 결과로 보라고 알림', async () => {
+    const warn = quiet();
+    const e = { ...env(), FRED_API_KEY: 'fk' } as ReturnType<typeof env>;
+    const base = routes(news);
+    // 11/19 목 요약인데 FRED 에는 11/18 까지만 있다.
+    const fetchFn = vi.fn(async (url: string) => url.includes('api.stlouisfed.org')
+      ? jsonRes({ observations: [{ date: '2026-11-18', value: '6910.39' }, { date: '2026-11-17', value: '7175.83' }] })
+      : base(url));
+    const ai = aiReturning(good);
+    await runIssueJob(e, thu7, { fetchFn: fetchFn as unknown as typeof fetch, wait: noWait, ai });
+    const prompt = ai.run.mock.calls[0][1].messages[1].content as string;
+    expect(prompt).not.toContain('S&P500 6910.39');
+    expect(prompt).toContain('미국 10년물 금리 5.04%');
+    expect(prompt).toContain('지수 종가(S&P500·나스닥)는 아직 받지 못했다');
+    expect(warn.mock.calls.flat().join(' ')).toContain('SP500 2026-11-18');
+  });
+
   it('장이 열린 날 keep 이면 받아들이지 않고 숫자만', async () => {
     quiet();
     const issue = await runIssueJob(env(), thu7, {
@@ -423,7 +477,12 @@ describe('서버 연결', () => {
     const e = env();
     const waits: Promise<unknown>[] = [];
     const ctx = { waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as ExecutionContext;
-    vi.stubGlobal('fetch', routes([]));
+    // 일요일 요약 대상은 11/20 금 미국장이라 금리 날짜도 11/20 으로(날짜가 다르면 걸러져 숫자가 없음).
+    const base = routes([]);
+    vi.stubGlobal('fetch', async (url: string) => url.includes('home.treasury.gov')
+      ? new Response(['2026-11-19', '2026-11-20'].map((d, i) =>
+        `<m:properties><d:NEW_DATE>${d}T00:00:00</d:NEW_DATE><d:BC_10YEAR>${i ? '5.04' : '5.07'}</d:BC_10YEAR></m:properties>`).join(''))
+      : base(url));
     // 평일 장이면 지표 검색 전 6초를 실제로 기다리므로 날짜를 일요일로 고정한다(Date 만 가짜).
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-22T07:00:00+09:00'));

@@ -3,9 +3,10 @@
 // AI 가 실패하거나 검사에서 떨어지면 숫자만 저장한다. 휴장·주말에 큰 일이 없으면 직전 요약을 유지한다.
 import type { Env } from './index';
 import { collectYesterday } from './index';
-import type { Issue } from './issue';
+import type { Issue, PriorIssue } from './issue';
 import { ISSUE_MODELS, aiText, buildMessages, isBigCryptoMove, numbersOnly, parseAiAnswer, type AiIssue } from './issueAi';
-import { planIssue } from './issueSchedule';
+import { kstDay, planIssue } from './issueSchedule';
+import { splitByDate } from './markets';
 import { GDELT_CREDIT, fetchHeadlines, type Headline } from './news';
 
 export const ISSUE_KEY = 'issue';
@@ -33,12 +34,19 @@ export async function runIssueJob(env: Env, now: Date, deps: IssueJobDeps = {}):
   const plan = planIssue(now);
   if (!plan.holidaysKnown) console.warn(`미국 휴장일 목록에 ${plan.usDate.slice(0, 4)}년이 없음(issueSchedule.ts)`);
 
-  const [data, headlines, prev] = await Promise.all([
+  const [collected, headlines, prev] = await Promise.all([
     collectYesterday(env, now, fetchFn),
     // 경제지표를 보는 날(화~금 미국장)에만 지표 기사를 따로 더 받는다.
     fetchHeadlines(plan.mode === 'weekend' ? 2 : 1, fetchFn, deps.wait, { indicators: plan.checkSurprise }),
     env.QUOTES.get<Issue>(ISSUE_KEY, 'json'),
   ]);
+  // 요약할 미국장과 날짜가 다른 시장 숫자(FRED 가 아직 안 올린 날의 지난 값)는 뺀다.
+  const { fresh, stale } = splitByDate(collected.markets, plan.lastSessionDate);
+  if (stale.length) {
+    console.warn(`요약 날짜(${plan.lastSessionDate})와 다른 시장 숫자 뺌: ${stale.map((m) => `${m.id} ${m.date}`).join(', ')}`);
+  }
+  const data = { ...collected, markets: fresh };
+  const prior = priorOf(prev, plan.kstDate);
   // 장이 열린 날과 코인이 크게 오르내린 날은 직전 요약을 유지하지 않는다.
   const allowKeep = plan.mode !== 'session' && !isBigCryptoMove(data);
 
@@ -46,7 +54,7 @@ export async function runIssueJob(env: Env, now: Date, deps: IssueJobDeps = {}):
   let basis: Issue['basis'] = 'numbers';
   if (ai) {
     try {
-      const out = await runFirstWorking(ai, modelsFor(env), buildMessages(plan, data, headlines));
+      const out = await runFirstWorking(ai, modelsFor(env), buildMessages(plan, data, headlines, prior));
       const { answer, reason } = parseAiAnswer(aiText(out), allowKeep);
       if (answer?.keep) {
         if (prev && !prev.sample) {
@@ -84,9 +92,20 @@ export async function runIssueJob(env: Env, now: Date, deps: IssueJobDeps = {}):
     items: result.items,
     basis,
     ...(basis === 'news' ? { credit: GDELT_CREDIT, sources: topSources(headlines) } : {}),
+    ...(prior ? { prior } : {}),
   };
   await env.QUOTES.put(ISSUE_KEY, JSON.stringify(issue));
   return issue;
+}
+
+/// AI 에게 "이미 알린 일"로 줄 직전 요약. 저장된 요약이 오늘(한국 날짜) 이전에 만든 것이면 그것,
+/// 오늘 이미 만든 것(같은 날 다시 만들기)이면 그 요약이 이어 가던 prior. 예시 문장이면 없음.
+export function priorOf(prev: Issue | null, kstToday: string): PriorIssue | undefined {
+  if (!prev || prev.sample) return undefined;
+  if (kstDay(new Date(prev.generatedAt)) < kstToday) {
+    return { date: prev.date, label: prev.label, text: prev.text, shortText: prev.shortText };
+  }
+  return prev.prior;
 }
 
 /// 맨 앞에 env.ISSUE_MODEL 을 두고 기본 목록을 잇는다(중복 제거).
