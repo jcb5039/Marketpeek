@@ -303,7 +303,13 @@ struct IssueWidgetView: View {
                     // 남은 높이에 다 들어가는 문장(긴 요약 → 짧은 요약 → 첫 구절)을 고른다.
                     IssueFitText(issue: issue, font: .subheadline.weight(.semibold))
                         .frame(maxHeight: .infinity, alignment: .topLeading)
-                    Text("\(Fmt.hm(issue.generatedAt)) 갱신").font(.caption2).foregroundStyle(.secondary)
+                    // 맨 아래: 왼쪽 요약 만든 날짜, 오른쪽 갱신 시각.
+                    HStack(spacing: 4) {
+                        Text(Fmt.mdw(issue.generatedAt))
+                        Spacer(minLength: 4)
+                        Text("\(Fmt.hm(issue.generatedAt)) 갱신")
+                    }
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             default:
