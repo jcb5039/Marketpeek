@@ -762,11 +762,13 @@ struct SmallHomeCard: View {
         VStack(alignment: .leading, spacing: 0) {
             WidgetHeader(title: title, snapshot: snapshot, now: now, next: next, showTime: false, showRefresh: false)
             Spacer(minLength: 4)
+            // 로고·종목명 묶음은 가운데(2026-11-26).
             HStack(alignment: .center, spacing: 6) {
+                Spacer(minLength: 0)
                 if let icon {
                     ItemIcon(kind: icon, size: 28)
                 }
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .center, spacing: 0) {
                     Text(symbol)
                         .font(.system(size: 22, weight: .bold))
                         .minimumScaleFactor(0.6)
@@ -774,6 +776,7 @@ struct SmallHomeCard: View {
                         Text(name).font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                Spacer(minLength: 0)
             }
             Spacer(minLength: 4)
             if let side = inlineSecondary.last {

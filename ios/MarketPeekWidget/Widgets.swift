@@ -589,16 +589,11 @@ struct HomeCard: View {
     private func singleSmall(_ item: HomeItem) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Spacer(minLength: 4)
-            if snapshot.issue != nil {
-                // 이슈 줄이 있으면 차트는 이름 오른쪽에 작게.
-                HStack(spacing: 6) {
-                    nameLine(item, icon: 16, font: 13, showName: false)
-                    Spacer(minLength: 4)
-                    sparkline(item).frame(width: 52, height: 16)
-                }
-            } else {
+            // 로고·종목명은 가운데. 2×2에는 차트를 넣지 않는다(2026-11-26).
+            HStack {
+                Spacer(minLength: 0)
                 nameLine(item, icon: 16, font: 13, showName: false)
-                sparkline(item).frame(maxWidth: .infinity, maxHeight: 30).padding(.vertical, 4)
+                Spacer(minLength: 0)
             }
             Spacer(minLength: 4)
             bigPrice(item.price, 20)
