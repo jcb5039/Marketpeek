@@ -79,6 +79,8 @@ class _CurrencyScreenState extends State<CurrencyScreen> {
                     value: s.fxCodes.contains(c.code),
                     onChanged: (_) => s.toggleFx(c.code),
                     controlAffinity: ListTileControlAffinity.trailing,
+                    // 체크 상자가 오른쪽이라 secondary 는 왼쪽에 그려진다.
+                    secondary: Text(c.flag, style: const TextStyle(fontSize: 26)),
                     title: Text('${c.name} ${c.code}',
                         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                     subtitle: Column(

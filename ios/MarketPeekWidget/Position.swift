@@ -100,7 +100,7 @@ private func listOffset(of id: String?, in ids: [String]) -> Int {
 
 struct ListPositionIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "미국주식 위젯"
-    static let description = IntentDescription("보여줄 종목, 홈 화면 모양과 배경을 골라요. 배경은 홈 화면 한 종목 모양에만 적용돼요.")
+    static let description = IntentDescription("보여줄 종목, 홈 화면 모양과 배경을 골라요. 배경은 2×2는 한 종목 모양, 4×2는 목록 모양에 적용돼요.")
 
     @Parameter(title: "종목 선택")
     var stock: StockPick?
@@ -110,6 +110,18 @@ struct ListPositionIntent: WidgetConfigurationIntent {
 
     @Parameter(title: "배경 선택", default: .plain)
     var background: LogoBackground
+
+    /// 4×2 목록 배경(자유 구성과 같은 줄마다 색). 편집 화면에는 4×2에서만 보인다.
+    @Parameter(title: "배경 선택", default: .plain)
+    var rowBackground: MixBackground
+
+    static var parameterSummary: some ParameterSummary {
+        When(widgetFamily: .equalTo, .systemMedium) {
+            Summary { \.$stock; \.$layout; \.$rowBackground }
+        } otherwise: {
+            Summary { \.$stock; \.$layout; \.$background }
+        }
+    }
 
     init() {}
 
@@ -126,7 +138,8 @@ struct PositionProvider: AppIntentTimelineProvider {
     func snapshot(for configuration: ListPositionIntent, in context: Context) async -> SnapshotEntry {
         let layout = configuration.layout.resolved(for: context.family)
         return .current(isPreview: context.isPreview, offset: configuration.offset,
-                        background: homeBackground(configuration.background, layout: layout), layout: layout)
+                        background: homeBackground(configuration.background, layout: layout),
+                        mixStyle: listBackground(configuration.rowBackground, family: context.family, layout: layout), layout: layout)
     }
 
     func timeline(for configuration: ListPositionIntent, in context: Context) async -> Timeline<SnapshotEntry> {
@@ -138,6 +151,7 @@ struct PositionProvider: AppIntentTimelineProvider {
         return await SnapshotEntry.timeline(parts: { _ in [.stocks] }, markets: { _ in [.us] },
                                             offset: p.offset,
                                             background: homeBackground(configuration.background, layout: p.layout),
+                                            mixStyle: listBackground(configuration.rowBackground, family: context.family, layout: p.layout),
                                             layout: p.layout, pagingId: p.pagingId,
                                             withIssue: WidgetPaging.isHome(family),
                                             chart: WidgetPaging.isHome(family) && p.layout == .single
@@ -161,13 +175,25 @@ struct PositionProvider: AppIntentTimelineProvider {
 
 struct FxWidgetIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "환율 위젯"
-    static let description = IntentDescription("홈 화면 모양과 배경을 골라요. 통화는 앱에서 고르고, › 버튼으로 다음 통화를 봐요. 배경은 한 종목 모양에만 적용돼요.")
+    static let description = IntentDescription("홈 화면 모양과 배경을 골라요. 통화는 앱에서 고르고, › 버튼으로 다음 통화를 봐요. 배경은 2×2는 한 종목 모양, 4×2는 목록 모양에 적용돼요.")
 
     @Parameter(title: "모양", default: .auto)
     var layout: HomeLayout
 
     @Parameter(title: "배경 선택", default: .plain)
     var background: LogoBackground
+
+    /// 4×2 목록 배경(자유 구성과 같은 줄마다 색). 편집 화면에는 4×2에서만 보인다.
+    @Parameter(title: "배경 선택", default: .plain)
+    var rowBackground: MixBackground
+
+    static var parameterSummary: some ParameterSummary {
+        When(widgetFamily: .equalTo, .systemMedium) {
+            Summary { \.$layout; \.$rowBackground }
+        } otherwise: {
+            Summary { \.$layout; \.$background }
+        }
+    }
 
     init() {}
 }
@@ -182,6 +208,7 @@ struct FxProvider: AppIntentTimelineProvider {
         let layout = configuration.layout.resolved(for: context.family)
         let entry = SnapshotEntry.current(isPreview: context.isPreview,
                                           background: homeBackground(configuration.background, layout: layout),
+                        mixStyle: listBackground(configuration.rowBackground, family: context.family, layout: layout),
                                           layout: layout)
         var e = entry
         e.offset = Self.base(entry.snapshot)
@@ -195,6 +222,7 @@ struct FxProvider: AppIntentTimelineProvider {
                                   snapshot: snap, count: { $0.fxList?.count ?? 0 })
         return await SnapshotEntry.timeline(parts: { _ in [.fx] }, offset: p.offset,
                                             background: homeBackground(configuration.background, layout: p.layout),
+                                            mixStyle: listBackground(configuration.rowBackground, family: context.family, layout: p.layout),
                                             layout: p.layout,
                                             pagingId: p.pagingId, withIssue: WidgetPaging.isHome(context.family),
                                             chart: WidgetPaging.isHome(context.family) && p.layout == .single
@@ -228,7 +256,7 @@ enum CoinDisplayStyle: String, AppEnum {
 
 struct CoinWidgetIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "코인 위젯"
-    static let description = IntentDescription("보여줄 코인과 정보, 홈 화면 모양과 배경을 골라요. 표시 정보는 잠금화면 사각형에만, 배경은 홈 화면 한 종목 모양에만 적용돼요.")
+    static let description = IntentDescription("보여줄 코인과 정보, 홈 화면 모양과 배경을 골라요. 표시 정보는 잠금화면 사각형에만, 배경은 2×2는 한 종목 모양, 4×2는 목록 모양에 적용돼요.")
 
     @Parameter(title: "코인 선택")
     var coin: CoinPick?
@@ -241,6 +269,18 @@ struct CoinWidgetIntent: WidgetConfigurationIntent {
 
     @Parameter(title: "배경 선택", default: .plain)
     var background: LogoBackground
+
+    /// 4×2 목록 배경(자유 구성과 같은 줄마다 색). 편집 화면에는 4×2에서만 보인다.
+    @Parameter(title: "배경 선택", default: .plain)
+    var rowBackground: MixBackground
+
+    static var parameterSummary: some ParameterSummary {
+        When(widgetFamily: .equalTo, .systemMedium) {
+            Summary { \.$coin; \.$layout; \.$style; \.$rowBackground }
+        } otherwise: {
+            Summary { \.$coin; \.$layout; \.$style; \.$background }
+        }
+    }
 
     init() {}
 
@@ -258,7 +298,8 @@ struct CoinProvider: AppIntentTimelineProvider {
         let layout = configuration.layout.resolved(for: context.family)
         return .current(isPreview: context.isPreview, offset: configuration.offset,
                         changeOnly: configuration.style == .changeOnly,
-                        background: homeBackground(configuration.background, layout: layout), layout: layout)
+                        background: homeBackground(configuration.background, layout: layout),
+                        mixStyle: listBackground(configuration.rowBackground, family: context.family, layout: layout), layout: layout)
     }
 
     func timeline(for configuration: CoinWidgetIntent, in context: Context) async -> Timeline<SnapshotEntry> {
@@ -268,6 +309,7 @@ struct CoinProvider: AppIntentTimelineProvider {
         return await SnapshotEntry.timeline(parts: { _ in [.coins] }, offset: p.offset,
                                             changeOnly: configuration.style == .changeOnly,
                                             background: homeBackground(configuration.background, layout: p.layout),
+                                            mixStyle: listBackground(configuration.rowBackground, family: context.family, layout: p.layout),
                                             layout: p.layout, pagingId: p.pagingId,
                                             withIssue: WidgetPaging.isHome(context.family),
                                             chart: WidgetPaging.isHome(context.family) && p.layout == .single

@@ -402,6 +402,19 @@ class _FxCard extends StatelessWidget {
   }
 
   Widget _fxLine(Currency c, FxQuote? q) {
+    // 왼쪽 국기 (환율 통화 선택 화면과 같은 크기).
+    return Row(
+      children: [
+        if (c.flag.isNotEmpty) ...[
+          Text(c.flag, style: const TextStyle(fontSize: 26)),
+          const SizedBox(width: 12),
+        ],
+        Expanded(child: _fxText(c, q)),
+      ],
+    );
+  }
+
+  Widget _fxText(Currency c, FxQuote? q) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

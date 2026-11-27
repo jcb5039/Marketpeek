@@ -128,7 +128,8 @@ enum WidgetPaging {
         guard isHome(family), layout == .list else { return 1 }
         switch family {
         case .systemSmall: return hasIssue ? 3 : 5
-        case .systemMedium: return 6
+        // 4×2: 이슈가 있으면 왼쪽 3개 | 오른쪽 AI 요약(HomeCard.listWithIssueMedium, 2026-11-26).
+        case .systemMedium: return hasIssue ? 3 : 6
         default: return hasIssue ? 6 : 8
         }
     }
@@ -376,6 +377,12 @@ enum WidgetCache {
 /// 목록 모양이면 로고 배경을 깔지 않는다(한 종목 로고가 목록 전체에 깔리지 않게). [layout]은 풀어 둔 값.
 func homeBackground(_ bg: LogoBackground, layout: HomeLayout) -> LogoBackground {
     layout == .list ? .plain : bg
+}
+
+/// 코인·미국주식·환율 위젯의 목록 배경(줄마다 색 등). 4×2 목록 모양에만 적용한다(2026-11-26).
+/// 편집 화면에서도 4×2에서만 이 항목이 보인다(각 Intent 의 parameterSummary).
+func listBackground(_ bg: MixBackground, family: WidgetFamily, layout: HomeLayout) -> MixBackground {
+    family == .systemMedium && layout == .list ? bg : .plain
 }
 
 /// 홈 위젯 시안(라이트·다크) 색. iOS 다크 모드 설정을 따라간다.
@@ -762,11 +769,13 @@ struct SmallHomeCard: View {
         VStack(alignment: .leading, spacing: 0) {
             WidgetHeader(title: title, snapshot: snapshot, now: now, next: next, showTime: false, showRefresh: false)
             Spacer(minLength: 4)
+            // 로고·종목명 묶음은 가운데(2026-11-26).
             HStack(alignment: .center, spacing: 6) {
+                Spacer(minLength: 0)
                 if let icon {
                     ItemIcon(kind: icon, size: 28)
                 }
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .center, spacing: 0) {
                     Text(symbol)
                         .font(.system(size: 22, weight: .bold))
                         .minimumScaleFactor(0.6)
@@ -774,6 +783,7 @@ struct SmallHomeCard: View {
                         Text(name).font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                Spacer(minLength: 0)
             }
             Spacer(minLength: 4)
             if let side = inlineSecondary.last {

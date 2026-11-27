@@ -31,7 +31,8 @@ struct CoinWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: CoinWidgetIntent.self, provider: CoinProvider()) { entry in
-            CoinWidgetView(entry: entry).widgetBackground(squareSmall: true, backdrop: .coin(entry))
+            CoinWidgetView(entry: entry).widgetBackground(squareSmall: true, backdrop: .coin(entry),
+                                                           forceDark: entry.mixStyle != .plain)
         }
         .configurationDisplayName("코인")
         .description("고른 코인의 원화 가격과 등락률. 길게 눌러 코인과 배경을 고를 수 있어요.")
@@ -95,7 +96,7 @@ struct StockWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: ListPositionIntent.self, provider: PositionProvider()) { entry in
-            StockWidgetView(entry: entry).widgetBackground(backdrop: .stock(entry))
+            StockWidgetView(entry: entry).widgetBackground(backdrop: .stock(entry), forceDark: entry.mixStyle != .plain)
         }
         .configurationDisplayName("미국주식")
         .description("달러·원화 가격, 등락률, 미국장 상태. 길게 눌러 종목과 배경을 고를 수 있어요.")
@@ -191,7 +192,7 @@ struct FxWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: FxWidgetIntent.self, provider: FxProvider()) { entry in
-            FxWidgetView(entry: entry).widgetBackground(backdrop: .fx(entry))
+            FxWidgetView(entry: entry).widgetBackground(backdrop: .fx(entry), forceDark: entry.mixStyle != .plain)
         }
         .configurationDisplayName("환율")
         .description("앱에서 고른 통화의 원화 환율과 등락률. 홈 화면에서는 › 버튼으로 다음 통화를 봐요.")
@@ -419,7 +420,7 @@ struct HomeCard: View {
     var next: String? = nil
     /// 한 종목 모양의 차트 (오래된 가격부터). nil이면 차트 없이.
     var chart: PriceChart? = nil
-    /// 목록 줄마다 색 (자유 구성 위젯 편집 "배경"). 기본이면 시안 목록.
+    /// 목록 줄마다 색 (자유 구성, 코인·미국주식·환율 4×2 위젯 편집 "배경"). 기본이면 시안 목록.
     var rowStyle: MixBackground = .plain
     @Environment(\.widgetFamily) private var family
 
@@ -432,8 +433,10 @@ struct HomeCard: View {
     }
 
     init(title: String, listTitle: String? = nil, entry: SnapshotEntry, snapshot: Snapshot, items: [HomeItem]) {
+        // 목록 배경(줄마다 색): 코인·미국주식·환율 4×2 위젯 편집 "배경 선택". 자유 구성은 따로 넘긴다.
         self.init(title: title, listTitle: listTitle, snapshot: snapshot, items: items,
-                  layout: entry.layout, offset: entry.offset, next: entry.pagingId, chart: entry.chart)
+                  layout: entry.layout, offset: entry.offset, next: entry.pagingId, chart: entry.chart,
+                  rowStyle: entry.mixStyle)
     }
 
     /// 차트. 색은 등락률과 같은 상승·하락 색, 점선은 등락률 기준 가격(코인: 오늘 오전 9시).
@@ -455,6 +458,8 @@ struct HomeCard: View {
                                         size: WidgetPaging.pageSize(family, layout: layout, hasIssue: hasIssue))
         // 환율 2×2 한 종목: 차트·이슈 줄 없이 이름·환율 / 기준·등락률 / 최근 업데이트 (시각은 아래로).
         let fxSmall = family == .systemSmall && layout == .single && (shown.first?.isFx ?? false)
+        // 4×2 목록 + 이슈: 왼쪽 종목 3개 | 오른쪽 AI 요약 (아래 이슈 줄 대신).
+        let splitIssue = family == .systemMedium && layout == .list && hasIssue
         VStack(alignment: .leading, spacing: 0) {
             header(layout == .list ? (listTitle ?? title) : title, showTime: !fxSmall, showRefresh: !fxSmall,
                    showTitle: !fxSmall)
@@ -467,6 +472,8 @@ struct HomeCard: View {
                     case .systemMedium: singleMedium(item)
                     default: singleSmall(item)
                     }
+                } else if splitIssue, let issue {
+                    listWithIssueMedium(shown, issue: issue)
                 } else if rowStyle != .plain {
                     tintedList(shown, hasIssue: hasIssue)
                 } else {
@@ -477,7 +484,7 @@ struct HomeCard: View {
                     }
                 }
             }
-            if let issue, !fxSmall { issueFooter(issue) }
+            if let issue, !fxSmall, !splitIssue { issueFooter(issue) }
         }
         .lineLimit(1)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -589,16 +596,11 @@ struct HomeCard: View {
     private func singleSmall(_ item: HomeItem) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Spacer(minLength: 4)
-            if snapshot.issue != nil {
-                // 이슈 줄이 있으면 차트는 이름 오른쪽에 작게.
-                HStack(spacing: 6) {
-                    nameLine(item, icon: 16, font: 13, showName: false)
-                    Spacer(minLength: 4)
-                    sparkline(item).frame(width: 52, height: 16)
-                }
-            } else {
+            // 로고·종목명은 가운데. 2×2에는 차트를 넣지 않는다(2026-11-26).
+            HStack {
+                Spacer(minLength: 0)
                 nameLine(item, icon: 16, font: 13, showName: false)
-                sparkline(item).frame(maxWidth: .infinity, maxHeight: 30).padding(.vertical, 4)
+                Spacer(minLength: 0)
             }
             Spacer(minLength: 4)
             bigPrice(item.price, 20)
@@ -722,6 +724,37 @@ struct HomeCard: View {
             .padding(.top, 8)
             Spacer(minLength: hasIssue ? 6 : 0)
         }
+    }
+
+    /// 4×2 목록 + 어제 이슈: 왼쪽 종목 3개(줄마다 색 배경이면 그 모양) | 오른쪽 AI 요약·날짜·갱신 시각.
+    /// 요약은 칸에 다 들어가는 문장(긴 요약 → 짧은 요약 → 첫 구절)을 고른다(2026-11-26).
+    private func listWithIssueMedium(_ rows: [HomeItem], issue: Snapshot.Issue) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Group {
+                if rowStyle != .plain {
+                    VStack(spacing: 4) {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { _, r in tintedRow(r, large: false) }
+                    }
+                } else {
+                    compactRows(rows, spacing: 6)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            HomePalette.line.frame(width: 1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("✦ 어제 이슈 · AI").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                IssueFitText(issue: issue, font: .system(size: 12, weight: .semibold))
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
+                HStack(spacing: 2) {
+                    Text(Fmt.mdw(issue.generatedAt))
+                    Spacer(minLength: 2)
+                    Text("\(Fmt.hm(issue.generatedAt)) 갱신")
+                }
+                .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .padding(.top, 8)
     }
 
     /// 자유 구성 "줄마다 색" 큰 목록: 줄마다 로고·국기 색을 깐다(2×2 줄마다 색과 같은 3가지 모양).
