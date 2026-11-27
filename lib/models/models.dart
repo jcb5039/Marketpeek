@@ -37,7 +37,19 @@ class Currency {
   final String code; // 예: USD
   final String name; // 예: 미국 달러
   final int unit;
+
+  /// 국기 이모지. 없는 통화면 빈 문자열.
+  String get flag => currencyFlags[code] ?? '';
 }
+
+/// 통화 코드 → 국기 이모지. 위젯 Swift `ItemIcon.flags`와 같은 목록(수출입은행 고시 22개).
+const currencyFlags = {
+  'USD': '🇺🇸', 'JPY': '🇯🇵', 'EUR': '🇪🇺', 'CNY': '🇨🇳', 'THB': '🇹🇭',
+  'GBP': '🇬🇧', 'CHF': '🇨🇭', 'CAD': '🇨🇦', 'AUD': '🇦🇺', 'NZD': '🇳🇿',
+  'HKD': '🇭🇰', 'SGD': '🇸🇬', 'IDR': '🇮🇩', 'MYR': '🇲🇾', 'BND': '🇧🇳',
+  'AED': '🇦🇪', 'SAR': '🇸🇦', 'KWD': '🇰🇼', 'BHD': '🇧🇭', 'SEK': '🇸🇪',
+  'NOK': '🇳🇴', 'DKK': '🇩🇰',
+};
 
 class CoinQuote {
   const CoinQuote({required this.priceKrw, required this.changePct});
