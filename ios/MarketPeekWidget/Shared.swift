@@ -44,8 +44,11 @@ extension SnapshotEntry {
         var points: PriceChart? = nil
         var wanted: Set<QuotePart> = []
         var stockMarkets: Set<StockMarket> = []
+        let callId = String(UUID().uuidString.prefix(4))
+        if snap == nil { WidgetDiag.call("\(callId) start noSnapshot") }
         if let s = snap {
             wanted = parts(s)
+            WidgetDiag.call("\(callId) start \(pagingId ?? "-") \(wanted.map { "\($0)" }.sorted().joined(separator: ","))")
             stockMarkets = markets(s)
             // 주식 로고(자유 구성)는 시세와 동시에 받는다. 둘 다 끝난 뒤 엔트리를 만든다.
             let logoIds = logos(s)
@@ -56,11 +59,13 @@ extension SnapshotEntry {
             if WidgetCache.recentlyNavigated {
                 // 다음 버튼(›) 직후: 인터넷을 기다리지 않고 저장해 둔 값으로 바로 그린다.
                 snap = WidgetCache.apply(to: s, parts: wanted.union(also))
+                WidgetDiag.call("\(callId) cache")
             } else {
                 // 홈 위젯 아래 "어제 이슈" 줄: 같이 받되 갱신 시각은 시세 기준으로만 바꾼다.
                 let r = await LiveQuotes.refreshDetailed(s, parts: wanted, also: also)
                 snap = r.snapshot
                 WidgetCache.save(r.snapshot, received: r.received)
+                WidgetDiag.call("\(callId) end got=\(r.received.map { "\($0)" }.sorted().joined(separator: ","))")
             }
             await logoDone
             points = await chartDone
