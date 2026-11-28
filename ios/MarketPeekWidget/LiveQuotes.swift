@@ -594,6 +594,16 @@ enum WidgetDiag {
         all[field + "At"] = ISO8601DateFormatter().string(from: Date())
         d.set(all, forKey: key)
     }
+
+    /// 타임라인 호출 기록 (최근 40줄). iOS가 안 부르는지, 불렀는데 중간에 끊기는지 구분하는 용도.
+    static let callsKey = "widgetDiag.calls"
+
+    static func call(_ line: String) {
+        guard let d = UserDefaults(suiteName: Snapshot.appGroupId) else { return }
+        var lines = d.stringArray(forKey: callsKey) ?? []
+        lines.append(ISO8601DateFormatter().string(from: Date()) + " " + line)
+        d.set(Array(lines.suffix(40)), forKey: callsKey)
+    }
 }
 
 // MARK: - 표시 문자열 (lib/util/format.dart와 같은 규칙)
